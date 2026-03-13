@@ -1,0 +1,9 @@
+Django>=6.0
+djangorestframework>=3.16
+djangorestframework-simplejwt>=5.5
+django-cors-headers>=4.9
+django-filter>=25.2
+drf-spectacular>=0.29
+python-decouple>=3.8
+psycopg2-binary>=2.9
+Pillow>=12.0
