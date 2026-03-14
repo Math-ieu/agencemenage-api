@@ -144,17 +144,21 @@ AUTH_COOKIE_HTTP_ONLY = True
 AUTH_COOKIE_SAMESITE = 'Lax'
 
 # ─── CORS ─────────────────────────────────────────────────────────────────
-CORS_ALLOWED_ORIGINS = config(
-    'CORS_ALLOWED_ORIGINS',
-    default='http://localhost:3000,http://localhost:5173'
-).split(',')
+CORS_ALLOWED_ORIGINS = [
+    origin.rstrip('/') for origin in config(
+        'CORS_ALLOWED_ORIGINS',
+        default='http://localhost:3000,http://localhost:5173'
+    ).split(',') if origin
+]
 
 CORS_ALLOW_CREDENTIALS = True
 
-CSRF_TRUSTED_ORIGINS = config(
-    'CSRF_TRUSTED_ORIGINS',
-    default='http://localhost:3000,http://localhost:5173'
-).split(',')
+CSRF_TRUSTED_ORIGINS = [
+    origin.rstrip('/') for origin in config(
+        'CSRF_TRUSTED_ORIGINS',
+        default='http://localhost:3000,http://localhost:5173'
+    ).split(',') if origin
+]
 
 # ─── DRF Spectacular (OpenAPI) ────────────────────────────────────────────
 SPECTACULAR_SETTINGS = {
