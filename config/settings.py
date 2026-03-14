@@ -141,7 +141,7 @@ SIMPLE_JWT = {
 # ─── Auth Cookies ─────────────────────────────────────────────────────────────
 AUTH_COOKIE_SECURE = not DEBUG
 AUTH_COOKIE_HTTP_ONLY = True
-AUTH_COOKIE_SAMESITE = 'Lax'
+AUTH_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
 
 # ─── CORS ─────────────────────────────────────────────────────────────────
 CORS_ALLOWED_ORIGINS = [
