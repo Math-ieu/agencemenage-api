@@ -7,3 +7,6 @@ drf-spectacular>=0.29
 python-decouple>=3.8
 psycopg2-binary>=2.9
 Pillow>=12.0
+gunicorn>=23.0
+whitenoise>=6.9
+dj-database-url>=2.3
