@@ -20,6 +20,8 @@ class NRPLogSerializer(serializers.ModelSerializer):
 
 
 class DemandeSerializer(serializers.ModelSerializer):
+    client_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    client_phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_detail = ClientListSerializer(source='client', read_only=True)
     assigned_to_detail = UserSerializer(source='assigned_to', read_only=True)
     nrp_count = serializers.SerializerMethodField()
@@ -29,24 +31,96 @@ class DemandeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Demande
         fields = '__all__'
+        extra_fields = ['reste_a_payer']
+
+    def get_field_names(self, declared_fields, info):
+        expanded_fields = super(DemandeSerializer, self).get_field_names(declared_fields, info)
+        if getattr(self.Meta, 'extra_fields', None):
+            # Ajouter les extra_fields qui ne sont pas déjà inclus
+            for field in self.Meta.extra_fields:
+                if field not in expanded_fields:
+                    expanded_fields.append(field)
+        return expanded_fields
 
     def get_nrp_count(self, obj):
         return obj.nrp_logs.count()
+
+    def create(self, validated_data):
+        client_name = validated_data.pop('client_name', '')
+        client_phone = validated_data.pop('client_phone', '')
+        
+        client = None
+        if client_phone or client_name:
+            from clients.models import Client
+            defaults = {'last_name': client_name}
+            form_data = validated_data.get('formulaire_data', {})
+            whatsapp = form_data.get('whatsapp_phone', '')
+            if whatsapp:
+                defaults['whatsapp'] = whatsapp
+            if form_data.get('ville'):
+                defaults['city'] = form_data.get('ville')
+            if form_data.get('quartier'):
+                defaults['neighborhood'] = form_data.get('quartier')
+
+            if client_phone:
+                client, _ = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
+            else:
+                client = Client.objects.create(**defaults)
+        
+        if client:
+            validated_data['client'] = client
+            
+        return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        client_name = validated_data.pop('client_name', None)
+        client_phone = validated_data.pop('client_phone', None)
+        
+        if client_phone is not None or client_name is not None:
+            if instance.client:
+                if client_name is not None:
+                    instance.client.last_name = client_name
+                if client_phone is not None:
+                    instance.client.phone = client_phone
+                
+                form_data = validated_data.get('formulaire_data', {})
+                whatsapp = form_data.get('whatsapp_phone', '')
+                if whatsapp:
+                    instance.client.whatsapp = whatsapp
+                instance.client.save()
+            else:
+                from clients.models import Client
+                defaults = {'last_name': client_name or ''}
+                if client_phone:
+                    instance.client, _ = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
+                else:
+                    instance.client = Client.objects.create(**defaults)
+                    
+        return super().update(instance, validated_data)
 
 
 class DemandeListSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source='client.display_name', read_only=True)
     client_phone = serializers.CharField(source='client.phone', read_only=True)
+    client_whatsapp = serializers.CharField(source='client.whatsapp', read_only=True)
+    client_city = serializers.CharField(source='client.city', read_only=True)
+    client_neighborhood = serializers.CharField(source='client.neighborhood', read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True)
+    mode_paiement_label = serializers.CharField(source='get_mode_paiement_display', read_only=True)
+    statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
     nrp_count = serializers.SerializerMethodField()
 
     class Meta:
         model = Demande
         fields = [
             'id', 'service', 'segment', 'source', 'statut', 'frequency',
-            'date_intervention', 'heure_intervention', 'prix', 'is_devis',
-            'mode_paiement', 'statut_paiement', 'cao', 'created_at',
-            'client_name', 'client_phone', 'assigned_to_name', 'nrp_count'
+            'frequency_label', 'date_intervention', 'heure_intervention',
+            'prix', 'is_devis', 'mode_paiement', 'statut_paiement', 
+            'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
+            'formulaire_data', 'created_at',
+            'client_name', 'client_phone', 'client_whatsapp',
+            'client_city', 'client_neighborhood',
+            'assigned_to_name', 'nrp_count'
         ]
 
     def get_nrp_count(self, obj):

@@ -42,13 +42,11 @@ class Demande(models.Model):
 
     # Modes de paiement
     VIREMENT = 'virement'
-    CARTE = 'carte'
     CHEQUE = 'cheque'
     AGENCE = 'agence'
     SUR_PLACE = 'sur_place'
     PAIEMENT_CHOICES = [
         (VIREMENT, 'Virement'),
-        (CARTE, 'Par carte'),
         (CHEQUE, 'Par chèque'),
         (AGENCE, 'À l\'agence'),
         (SUR_PLACE, 'Sur place'),
@@ -56,12 +54,14 @@ class Demande(models.Model):
 
     # Statuts paiement
     NON_PAYE = 'non_paye'
-    EN_ATTENTE_PAIEMENT = 'en_attente_paiement'
-    PAYE = 'paye'
+    ACOMPTE = 'acompte'
+    PARTIEL = 'partiel'
+    INTEGRAL = 'integral'
     PAIEMENT_STATUT_CHOICES = [
         (NON_PAYE, 'Non payé'),
-        (EN_ATTENTE_PAIEMENT, 'Paiement en attente'),
-        (PAYE, 'Paiement effectué'),
+        (ACOMPTE, 'Acompte versé'),
+        (PARTIEL, 'Paiement partiel'),
+        (INTEGRAL, 'Paiement intégral'),
     ]
 
     # Core fields
@@ -107,6 +107,20 @@ class Demande(models.Model):
     # Meta
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
+
+    @property
+    def reste_a_payer(self):
+        """Calcule automatiquement le reste à payer."""
+        if not self.prix:
+            return 0
+        if self.statut_paiement == self.NON_PAYE:
+            return self.prix
+        if self.statut_paiement == self.INTEGRAL:
+            return 0
+        if self.statut_paiement in [self.ACOMPTE, self.PARTIEL]:
+            avance = self.avance_paiement or 0
+            return max(0, self.prix - avance)
+        return self.prix
 
     class Meta:
         verbose_name = 'Demande'
