@@ -27,6 +27,8 @@ class DemandeSerializer(serializers.ModelSerializer):
     nrp_count = serializers.SerializerMethodField()
     nrp_logs = NRPLogSerializer(many=True, read_only=True)
     documents = DocumentSerializer(many=True, read_only=True)
+    regenerer_devis = serializers.BooleanField(write_only=True, required=False, default=False)
+    envoyer_whatsapp = serializers.BooleanField(write_only=True, required=False, default=False)
 
     class Meta:
         model = Demande
