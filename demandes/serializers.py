@@ -51,6 +51,10 @@ class DemandeSerializer(serializers.ModelSerializer):
         client_name = validated_data.pop('client_name', '')
         client_phone = validated_data.pop('client_phone', '')
         
+        # Pop non-model fields
+        regenerer_devis = validated_data.pop('regenerer_devis', False)
+        envoyer_whatsapp = validated_data.pop('envoyer_whatsapp', False)
+        
         client = None
         if client_phone or client_name:
             from clients.models import Client
@@ -77,6 +81,10 @@ class DemandeSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         client_name = validated_data.pop('client_name', None)
         client_phone = validated_data.pop('client_phone', None)
+        
+        # Pop non-model fields
+        regenerer_devis = validated_data.pop('regenerer_devis', False)
+        envoyer_whatsapp = validated_data.pop('envoyer_whatsapp', False)
         
         if client_phone is not None or client_name is not None:
             if instance.client:
