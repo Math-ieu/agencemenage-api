@@ -5,10 +5,19 @@ from accounts.serializers import UserSerializer
 
 
 class DocumentSerializer(serializers.ModelSerializer):
+    # URL sécurisée qui n'expose JAMAIS le chemin réel du fichier
+    download_url = serializers.SerializerMethodField()
+
     class Meta:
         model = Document
-        fields = '__all__'
-        read_only_fields = ['created_at', 'created_by']
+        fields = ['id', 'demande', 'type_document', 'nom', 'created_at', 'created_by', 'download_url']
+        read_only_fields = ['created_at', 'created_by', 'download_url']
+
+    def get_download_url(self, obj):
+        """Retourne l'URL de téléchargement sécurisé sans exposer le chemin physique."""
+        if not obj.fichier:
+            return None
+        return f'/api/demandes/{obj.demande_id}/download/{obj.id}/'
 
 
 class NRPLogSerializer(serializers.ModelSerializer):
@@ -119,6 +128,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     mode_paiement_label = serializers.CharField(source='get_mode_paiement_display', read_only=True)
     statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
     nrp_count = serializers.SerializerMethodField()
+    documents = DocumentSerializer(many=True, read_only=True)
 
     class Meta:
         model = Demande
@@ -130,7 +140,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'formulaire_data', 'created_at',
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood',
-            'assigned_to_name', 'nrp_count'
+            'assigned_to_name', 'nrp_count', 'documents'
         ]
 
     def get_nrp_count(self, obj):

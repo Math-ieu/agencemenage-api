@@ -13,7 +13,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, Spec
 from accounts.views import CustomTokenObtainPairView, CookieTokenRefreshView, LogoutView, UserViewSet, MeView, ChangePasswordView
 from clients.views import ClientViewSet
 from agents.views import AgentViewSet
-from demandes.views import DemandeViewSet, PublicDemandeCreateView, AuditLogViewSet
+from demandes.views import DemandeViewSet, PublicDemandeCreateView, AuditLogViewSet, DocumentViewSet
 from missions.views import MissionViewSet
 from finance.views import FactureViewSet, PaiementViewSet, EntreeCaisseViewSet
 from feedback.views import FeedbackViewSet
@@ -24,6 +24,7 @@ router.register(r'users', UserViewSet, basename='user')
 router.register(r'clients', ClientViewSet, basename='client')
 router.register(r'agents', AgentViewSet, basename='agent')
 router.register(r'demandes', DemandeViewSet, basename='demande')
+router.register(r'documents', DocumentViewSet, basename='document')
 router.register(r'missions', MissionViewSet, basename='mission')
 router.register(r'finance/factures', FactureViewSet, basename='facture')
 router.register(r'finance/paiements', PaiementViewSet, basename='paiement')
