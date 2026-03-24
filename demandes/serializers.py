@@ -76,6 +76,8 @@ class DemandeSerializer(serializers.ModelSerializer):
                 defaults['city'] = form_data.get('ville')
             if form_data.get('quartier'):
                 defaults['neighborhood'] = form_data.get('quartier')
+            if form_data.get('adresse'):
+                defaults['address'] = form_data.get('adresse')
 
             if client_phone:
                 client, _ = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
@@ -85,6 +87,11 @@ class DemandeSerializer(serializers.ModelSerializer):
         if client:
             validated_data['client'] = client
             
+        # Sync preference_horaire from formulaire_data if present
+        form_data = validated_data.get('formulaire_data', {})
+        if 'preference_horaire' in form_data and not validated_data.get('preference_horaire'):
+            validated_data['preference_horaire'] = form_data['preference_horaire']
+
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
@@ -106,6 +113,14 @@ class DemandeSerializer(serializers.ModelSerializer):
                 whatsapp = form_data.get('whatsapp_phone', '')
                 if whatsapp:
                     instance.client.whatsapp = whatsapp
+                
+                if form_data.get('ville'):
+                    instance.client.city = form_data.get('ville')
+                if form_data.get('quartier'):
+                    instance.client.neighborhood = form_data.get('quartier')
+                if form_data.get('adresse'):
+                    instance.client.address = form_data.get('adresse')
+                    
                 instance.client.save()
             else:
                 from clients.models import Client
@@ -114,6 +129,11 @@ class DemandeSerializer(serializers.ModelSerializer):
                     instance.client, _ = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
                 else:
                     instance.client = Client.objects.create(**defaults)
+        
+        if 'formulaire_data' in validated_data:
+            pref = validated_data['formulaire_data'].get('preference_horaire')
+            if pref:
+                instance.preference_horaire = pref
                     
         return super().update(instance, validated_data)
 
@@ -124,6 +144,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     client_whatsapp = serializers.CharField(source='client.whatsapp', read_only=True)
     client_city = serializers.CharField(source='client.city', read_only=True)
     client_neighborhood = serializers.CharField(source='client.neighborhood', read_only=True)
+    client_address = serializers.CharField(source='client.address', read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True)
     mode_paiement_label = serializers.CharField(source='get_mode_paiement_display', read_only=True)
     statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
@@ -137,9 +158,9 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'frequency_label', 'date_intervention', 'heure_intervention',
             'prix', 'is_devis', 'mode_paiement', 'statut_paiement', 
             'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
-            'formulaire_data', 'created_at',
+            'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp',
-            'client_city', 'client_neighborhood',
+            'client_city', 'client_neighborhood', 'client_address',
             'assigned_to_name', 'nrp_count', 'documents'
         ]
 
@@ -156,16 +177,17 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
     client_whatsapp = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_ville = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_quartier = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    client_address = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_entity = serializers.CharField(write_only=True, required=False, allow_blank=True)
 
     class Meta:
         model = Demande
         fields = [
             'service', 'segment', 'frequency', 'frequency_label',
-            'date_intervention', 'heure_intervention', 'prix', 'is_devis',
+            'date_intervention', 'heure_intervention', 'preference_horaire', 'prix', 'is_devis',
             'formulaire_data',
             'client_nom', 'client_prenom', 'client_phone', 'client_email',
-            'client_whatsapp', 'client_ville', 'client_quartier', 'client_entity',
+            'client_whatsapp', 'client_ville', 'client_quartier', 'client_address', 'client_entity',
         ]
 
     def create(self, validated_data):
@@ -180,6 +202,7 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
             'whatsapp': validated_data.pop('client_whatsapp', ''),
             'city': validated_data.pop('client_ville', ''),
             'neighborhood': validated_data.pop('client_quartier', ''),
+            'address': validated_data.pop('client_address', ''),
             'entity_name': validated_data.pop('client_entity', ''),
             'segment': validated_data.get('segment', Client.PARTICULIER),
         }

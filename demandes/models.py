@@ -76,6 +76,7 @@ class Demande(models.Model):
     # Scheduling
     date_intervention = models.DateField(null=True, blank=True)
     heure_intervention = models.CharField(max_length=50, blank=True)
+    preference_horaire = models.CharField(max_length=50, blank=True, verbose_name="Préférence horaire")
 
     # Pricing
     prix = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Prix")

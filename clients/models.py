@@ -23,7 +23,8 @@ class Client(models.Model):
 
     # Location
     city = models.CharField(max_length=100, blank=True)
-    neighborhood = models.CharField(max_length=200, blank=True, verbose_name="Quartier/Adresse")
+    neighborhood = models.CharField(max_length=200, blank=True, verbose_name="Quartier")
+    address = models.TextField(blank=True, verbose_name="Adresse")
 
     # Meta
     created_at = models.DateTimeField(auto_now_add=True)
