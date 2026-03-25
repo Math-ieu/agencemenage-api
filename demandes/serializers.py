@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from .models import Demande, NRPLog, Document, AuditLog
+from .constants import get_segment_from_service
 from clients.serializers import ClientListSerializer
 from accounts.serializers import UserSerializer
 
@@ -87,6 +88,19 @@ class DemandeSerializer(serializers.ModelSerializer):
         if client:
             validated_data['client'] = client
             
+        # Automate segmentation
+        service = validated_data.get('service')
+        segment_provided = 'segment' in self.initial_data
+        
+        if service and not segment_provided:
+            segment = get_segment_from_service(service)
+            validated_data['segment'] = segment
+        
+        # Always sync client segment with the demand's segment
+        if client and 'segment' in validated_data:
+            client.segment = validated_data['segment']
+            client.save()
+            
         # Sync preference_horaire from formulaire_data if present
         form_data = validated_data.get('formulaire_data', {})
         if 'preference_horaire' in form_data and not validated_data.get('preference_horaire'):
@@ -134,6 +148,20 @@ class DemandeSerializer(serializers.ModelSerializer):
             pref = validated_data['formulaire_data'].get('preference_horaire')
             if pref:
                 instance.preference_horaire = pref
+        
+        # Automate segmentation on update
+        service = validated_data.get('service', instance.service)
+        segment_provided = 'segment' in self.initial_data
+        
+        if service and not segment_provided:
+            segment = get_segment_from_service(service)
+            validated_data['segment'] = segment
+            
+        # Sync client segment if demand's segment changed or was explicitly set
+        target_client = instance.client
+        if target_client and 'segment' in validated_data:
+            target_client.segment = validated_data['segment']
+            target_client.save()
                     
         return super().update(instance, validated_data)
 
@@ -212,6 +240,19 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
             phone=client_data['phone'],
             defaults=client_data
         )
+
+        # Automate segmentation
+        service = validated_data.get('service')
+        segment_provided = 'segment' in self.initial_data
+        
+        if service and not segment_provided:
+            segment = get_segment_from_service(service)
+            validated_data['segment'] = segment
+
+        # Sync client segment
+        if 'segment' in validated_data:
+            client.segment = validated_data['segment']
+            client.save()
 
         demande = Demande.objects.create(
             client=client,

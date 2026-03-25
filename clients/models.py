@@ -43,6 +43,7 @@ class Client(models.Model):
 
     @property
     def display_name(self):
+        name_parts = f"{self.first_name} {self.last_name}".strip()
         if self.segment == self.ENTREPRISE:
-            return self.entity_name or self.contact_person
-        return f"{self.first_name} {self.last_name}".strip() or self.phone
+            return self.entity_name or self.contact_person or name_parts or self.phone
+        return name_parts or self.entity_name or self.phone
