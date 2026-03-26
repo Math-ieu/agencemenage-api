@@ -2,23 +2,19 @@ from django.db import models
 
 
 class Agent(models.Model):
-    ACTIF = 'actif'
-    INACTIF = 'inactif'
-    EN_MISSION = 'en_mission'
     DISPONIBLE = 'disponible'
+    NON_DISPONIBLE = 'non_disponible'
 
     STATUT_CHOICES = [
-        (ACTIF, 'Actif'),
-        (INACTIF, 'Inactif'),
-        (EN_MISSION, 'En mission'),
         (DISPONIBLE, 'Disponible'),
+        (NON_DISPONIBLE, 'Non disponible'),
     ]
 
     POSTE_CHOICES = [
-        ('agent_menage', 'Agent de ménage'),
+        ('femme_menage', 'Femme de ménage'),
         ('garde_malade', 'Garde malade'),
-        ('agent_nettoyage', 'Agent de nettoyage'),
-        ('placement', 'Placement'),
+        ('auxiliaire_vie', 'Auxiliaire de vie'),
+        ('nounou', 'Nounou'),
         ('autre', 'Autre'),
     ]
 
@@ -34,7 +30,7 @@ class Agent(models.Model):
     has_children = models.BooleanField(default=False, verbose_name="A des enfants")
 
     # Professional info
-    poste = models.CharField(max_length=50, choices=POSTE_CHOICES, default='agent_menage')
+    poste = models.CharField(max_length=50, choices=POSTE_CHOICES, default='femme_menage')
     experience = models.CharField(max_length=100, blank=True)
     experience_years = models.PositiveIntegerField(default=0, verbose_name="Expérience (années)")
     experience_months = models.PositiveIntegerField(default=0, verbose_name="Expérience (mois)")

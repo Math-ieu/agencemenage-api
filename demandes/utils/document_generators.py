@@ -107,7 +107,7 @@ def generate_devis_pdf(data: dict) -> bytes:
  
     c.drawString(left_col,  y - 13 * mm, f"Nom: {data.get('client_nom', '')}")
     c.drawString(right_col, y - 13 * mm, f"Adresse: {data.get('client_adresse', '')}")
-    c.drawString(left_col,  y - 19 * mm, f"Téléphone: {data.get('client_telephone', '')}")
+    c.drawString(left_col,  y - 19 * mm, f"Téléphone: +212 {data.get('client_telephone', '')}")
  
     # ── DETAILS table ─────────────────────────────────────────────────────────
     y -= section_h + 10 * mm
@@ -207,7 +207,7 @@ def generate_recap_png(data: dict) -> bytes:
     draw.text((cx + 15, cy + 12), "Client",           fill=DARK_PIL, font=font(13, bold=True))
     draw.text((cx + 15, cy + 35), f"Nom: {data.get('client_nom','')}",
               fill=DARK_PIL, font=font(12))
-    draw.text((cx + 15, cy + 55), f"Téléphone: {data.get('client_telephone','')}",
+    draw.text((cx + 15, cy + 55), f"Téléphone: +212 {data.get('client_telephone','')}",
               fill=DARK_PIL, font=font(12))
     draw.text((cx + cw // 2, cy + 35), f"Adresse: {data.get('client_adresse','')}",
               fill=DARK_PIL, font=font(12))
