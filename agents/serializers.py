@@ -1,3 +1,4 @@
+from django.db import models
 from rest_framework import serializers
 from .models import Agent, AgentExperience
 
@@ -19,21 +20,43 @@ class AgentSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def create(self, validated_data):
-        experiences_json = self.context['request'].data.get('experiences_json')
-        languages_json = self.context['request'].data.get('languages')
+        request = self.context.get('request')
+        if not request:
+            return super().create(validated_data)
+            
+        # Handle JSON strings from FormData
+        experiences_json = request.data.get('experiences_json')
+        languages_json = request.data.get('languages')
         
         if languages_json and isinstance(languages_json, str):
             import json
-            validated_data['languages'] = json.loads(languages_json)
+            try:
+                validated_data['languages'] = json.loads(languages_json)
+            except json.JSONDecodeError:
+                pass
             
+        # Handle Boolean strings from FormData
+        for field in Agent._meta.get_fields():
+            if isinstance(field, models.BooleanField):
+                val = request.data.get(field.name)
+                if val is not None and isinstance(val, str):
+                    validated_data[field.name] = val.lower() == 'true'
+
         experiences_data = validated_data.pop('experiences', [])
         if not experiences_data and experiences_json:
             import json
-            experiences_data = json.loads(experiences_json)
+            try:
+                experiences_data = json.loads(experiences_json)
+            except json.JSONDecodeError:
+                pass
             
+        # Files are automatically in request.FILES and should be in validated_data 
+        # because the views use the default parsers (MultiPartParser).
         agent = Agent.objects.create(**validated_data)
+        
         for exp_data in experiences_data:
             AgentExperience.objects.create(agent=agent, **exp_data)
+            
         return agent
 
     def update(self, instance, validated_data):

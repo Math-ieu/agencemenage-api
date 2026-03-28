@@ -182,7 +182,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Demande
         fields = [
-            'id', 'service', 'segment', 'source', 'statut', 'frequency',
+            'id', 'client', 'service', 'segment', 'source', 'statut', 'frequency',
             'frequency_label', 'date_intervention', 'heure_intervention',
             'prix', 'is_devis', 'mode_paiement', 'statut_paiement', 
             'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
