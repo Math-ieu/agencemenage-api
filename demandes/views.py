@@ -16,12 +16,13 @@ from .serializers import (
     PublicDemandeCreateSerializer, AuditLogSerializer
 )
 from accounts.serializers import UserSerializer
+from .filters import DemandeFilter
 
 
 class DemandeViewSet(viewsets.ModelViewSet):
     queryset = Demande.objects.select_related('client', 'assigned_to').prefetch_related('nrp_logs', 'documents')
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['statut', 'segment', 'source', 'service', 'assigned_to', 'statut_paiement']
+    filterset_class = DemandeFilter
     search_fields = ['client__first_name', 'client__last_name', 'client__phone',
                      'client__entity_name', 'service']
     ordering_fields = ['created_at', 'date_intervention', 'statut']
