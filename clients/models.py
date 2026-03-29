@@ -30,6 +30,8 @@ class Client(models.Model):
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     notes = models.TextField(blank=True)
+    avis_commercial = models.TextField(blank=True, verbose_name="Avis commercial")
+    avis_operationnel = models.TextField(blank=True, verbose_name="Avis opérationnel")
 
     class Meta:
         verbose_name = 'Client'
