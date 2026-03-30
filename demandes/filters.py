@@ -8,4 +8,4 @@ class DemandeFilter(django_filters.FilterSet):
 
     class Meta:
         model = Demande
-        fields = ['statut', 'segment', 'source', 'service', 'assigned_to', 'statut_paiement', 'commercial']
+        fields = ['statut', 'segment', 'source', 'service', 'assigned_to', 'statut_paiement', 'commercial', 'client']
