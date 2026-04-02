@@ -61,10 +61,16 @@ class CookieTokenRefreshView(TokenRefreshView):
         if not refresh_token:
             return Response({"detail": "Refresh token manquant dans les cookies."}, status=status.HTTP_401_UNAUTHORIZED)
         
-        # Injecter le refresh token pour la vue sous-jacente
-        if request.data._mutable is False:
+        # Injecter le refresh token dans request.data de manière compatible
+        # avec les QueryDict (form data) et les dict Python (JSON)
+        if hasattr(request.data, '_mutable'):
+            # QueryDict (application/x-www-form-urlencoded)
             request.data._mutable = True
-        request.data['refresh'] = refresh_token
+            request.data['refresh'] = refresh_token
+            request.data._mutable = False
+        else:
+            # dict Python standard (application/json) — on surcharge la propriété
+            request._data = {**request.data, 'refresh': refresh_token}
         
         try:
             response = super().post(request, *args, **kwargs)

@@ -198,15 +198,15 @@ class DemandeListSerializer(serializers.ModelSerializer):
 
 class PublicDemandeCreateSerializer(serializers.ModelSerializer):
     """Serializer public (sans auth) pour créer une demande depuis le site web."""
-    client_nom = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    client_prenom = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    client_nom = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    client_prenom = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
     client_phone = serializers.CharField(write_only=True)
-    client_email = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    client_whatsapp = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    client_ville = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    client_quartier = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    client_address = serializers.CharField(write_only=True, required=False, allow_blank=True)
-    client_entity = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    client_email = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    client_whatsapp = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    client_ville = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    client_quartier = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    client_address = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
+    client_entity = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)
 
     class Meta:
         model = Demande
@@ -226,20 +226,30 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
             'last_name': validated_data.pop('client_nom', ''),
             'first_name': validated_data.pop('client_prenom', ''),
             'phone': validated_data.pop('client_phone'),
-            'email': validated_data.pop('client_email', ''),
-            'whatsapp': validated_data.pop('client_whatsapp', ''),
-            'city': validated_data.pop('client_ville', ''),
-            'neighborhood': validated_data.pop('client_quartier', ''),
-            'address': validated_data.pop('client_address', ''),
-            'entity_name': validated_data.pop('client_entity', ''),
+            'email': validated_data.pop('client_email', '') or '',
+            'whatsapp': validated_data.pop('client_whatsapp', '') or '',
+            'city': validated_data.pop('client_ville', '') or '',
+            'neighborhood': validated_data.pop('client_quartier', '') or '',
+            'address': validated_data.pop('client_address', '') or '',
+            'entity_name': validated_data.pop('client_entity', '') or '',
             'segment': validated_data.get('segment', Client.PARTICULIER),
         }
 
-        # Find or create client by phone
-        client, _ = Client.objects.get_or_create(
-            phone=client_data['phone'],
-            defaults=client_data
+        phone = client_data.pop('phone')
+
+        # Find or create client by phone, then update fields if they exist
+        client, created = Client.objects.get_or_create(
+            phone=phone,
+            defaults={'phone': phone, **client_data}
         )
+
+        # If client already existed, update non-empty fields
+        if not created:
+            for field, value in client_data.items():
+                if value:  # Only update with non-empty values
+                    setattr(client, field, value)
+            client.phone = phone
+            client.save()
 
         # Automate segmentation
         service = validated_data.get('service')

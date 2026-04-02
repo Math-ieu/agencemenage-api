@@ -7,7 +7,6 @@ SERVICES_PARTICULIERS = [
     "ménage airbnb",
     "nettoyage post-déménagement",
     "ménage fin de chantier",
-    "aide à domicile",
     "auxiliaire de vie",
     "ménage post-sinistre"
 ]
