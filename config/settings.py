@@ -105,10 +105,8 @@ AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
 AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL', default=None) # ex: https://xxx.tigris.app
 AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='us-east-1')
 AWS_S3_FILE_OVERWRITE = False
-# Contournement pour Tigris/Railway qui peut bloquer les ACLs en mode public: 
-# on génère des URLs signées valides pendant 10 ans (315360000 secondes).
-AWS_QUERYSTRING_AUTH = True
-AWS_QUERYSTRING_EXPIRE = 315360000
+AWS_DEFAULT_ACL = 'public-read'
+AWS_QUERYSTRING_AUTH = False
 AWS_S3_VERIFY = True
 
 if AWS_STORAGE_BUCKET_NAME:
