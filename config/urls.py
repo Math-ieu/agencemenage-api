@@ -17,6 +17,7 @@ from demandes.views import DemandeViewSet, PublicDemandeCreateView, AuditLogView
 from missions.views import MissionViewSet
 from finance.views import FactureViewSet, PaiementViewSet, EntreeCaisseViewSet
 from feedback.views import FeedbackViewSet
+from blog.views import CategoryViewSet, PostViewSet
 
 # Router
 router = DefaultRouter()
@@ -31,6 +32,8 @@ router.register(r'finance/paiements', PaiementViewSet, basename='paiement')
 router.register(r'finance/caisse', EntreeCaisseViewSet, basename='caisse')
 router.register(r'feedback', FeedbackViewSet, basename='feedback')
 router.register(r'audit', AuditLogViewSet, basename='audit')
+router.register(r'blog/categories', CategoryViewSet, basename='blog-category')
+router.register(r'blog/posts', PostViewSet, basename='blog-post')
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -47,6 +50,8 @@ urlpatterns = [
 
     # Public endpoint (no auth required — from website)
     path('api/public/demandes/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demande_create'),
+    path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
+    path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
 
     # OpenAPI docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

@@ -36,6 +36,7 @@ INSTALLED_APPS = [
     'missions',
     'finance',
     'feedback',
+    'blog',
 ]
 
 MIDDLEWARE = [
