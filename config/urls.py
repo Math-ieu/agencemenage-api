@@ -18,6 +18,7 @@ from missions.views import MissionViewSet
 from finance.views import FactureViewSet, PaiementViewSet, EntreeCaisseViewSet
 from feedback.views import FeedbackViewSet
 from blog.views import CategoryViewSet, PostViewSet
+from media.views import MediaFileView
 
 # Router
 router = DefaultRouter()
@@ -47,6 +48,9 @@ urlpatterns = [
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),
     path('api/auth/me/', MeView.as_view(), name='me'),
     path('api/auth/change-password/', ChangePasswordView.as_view(), name='change_password'),
+
+    # Public media endpoint — serves files from S3 / Railway bucket
+    path('api/media/<path:file_path>/', MediaFileView.as_view(), name='media_file'),
 
     # Public endpoint (no auth required — from website)
     path('api/public/demandes/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demande_create'),
