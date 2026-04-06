@@ -7,7 +7,7 @@ class Client(models.Model):
     SEGMENT_CHOICES = [
         (PARTICULIER, 'Particulier'),
         (ENTREPRISE, 'Entreprise'),
-    ]
+    ] 
 
     # Contact info
     first_name = models.CharField(max_length=100, blank=True)
