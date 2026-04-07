@@ -125,7 +125,6 @@ else:
         raise ImproperlyConfigured(
             "AWS_STORAGE_BUCKET_NAME est requis en production pour éviter le stockage local."
         )
-
     STORAGES = {
         "default": {
             "BACKEND": "django.core.files.storage.FileSystemStorage",
