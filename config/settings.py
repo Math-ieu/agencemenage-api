@@ -120,11 +120,12 @@ if AWS_STORAGE_BUCKET_NAME:
     }
     MEDIA_URL = '/api/media/'
 else:
-    # Fail loudly in production if bucket is missing and user doesn't want local storage
     if not DEBUG:
         from django.core.exceptions import ImproperlyConfigured
-        raise ImproperlyConfigured("AWS_STORAGE_BUCKET_NAME est requis en production pour éviter le stockage local.")
-        
+        raise ImproperlyConfigured(
+            "AWS_STORAGE_BUCKET_NAME est requis en production pour éviter le stockage local."
+        )
+
     STORAGES = {
         "default": {
             "BACKEND": "django.core.files.storage.FileSystemStorage",
