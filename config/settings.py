@@ -112,13 +112,13 @@ AWS_S3_VERIFY = True
 if AWS_STORAGE_BUCKET_NAME:
     STORAGES = {
         "default": {
-            "BACKEND": "storages.backends.s3boto3.S3Boto3Storage",
+            "BACKEND": "config.storage_backends.ProxyS3Boto3Storage",
         },
         "staticfiles": {
             "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
         },
     }
-    MEDIA_URL = f"https://{AWS_STORAGE_BUCKET_NAME}.{AWS_S3_ENDPOINT_URL.split('//')[1]}/" if AWS_S3_ENDPOINT_URL else f"https://{AWS_STORAGE_BUCKET_NAME}.s3.amazonaws.com/"
+    MEDIA_URL = '/api/media/'
 else:
     # Fail loudly in production if bucket is missing and user doesn't want local storage
     if not DEBUG:

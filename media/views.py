@@ -19,8 +19,17 @@ class MediaFileView(APIView):
     authentication_classes = []  # Skip auth entirely — public endpoint
 
     def get(self, request, file_path):
+        # Clean path (remove leading slash if any)
+        file_path = file_path.lstrip('/')
+
         if not default_storage.exists(file_path):
             raise Http404(f"File '{file_path}' not found.")
+
+        # Get file size for Content-Length
+        try:
+            file_size = default_storage.size(file_path)
+        except Exception:
+            file_size = None
 
         file_obj = default_storage.open(file_path, "rb")
 
@@ -29,6 +38,9 @@ class MediaFileView(APIView):
             content_type = "application/octet-stream"
 
         response = FileResponse(file_obj, content_type=content_type)
+        
+        if file_size is not None:
+            response["Content-Length"] = file_size
 
         if encoding:
             response["Content-Encoding"] = encoding
