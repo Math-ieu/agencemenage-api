@@ -120,6 +120,7 @@ class DemandeSerializer(serializers.ModelSerializer):
             if instance.client:
                 if client_name is not None:
                     instance.client.last_name = client_name
+                    instance.client.first_name = ""  # Prevent duplication when BO provides full name
                 if client_phone is not None:
                     instance.client.phone = client_phone
                 
