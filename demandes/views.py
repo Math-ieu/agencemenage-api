@@ -10,6 +10,8 @@ from .utils.document_generators import generate_devis_pdf, generate_recap_png
 import datetime
 import mimetypes
 import os
+from django.conf import settings
+from .utils.whatsapp import WhatsAppService
 from .serializers import (
     DemandeSerializer, DemandeListSerializer,
     NRPLogSerializer, DocumentSerializer,
@@ -120,30 +122,64 @@ class DemandeViewSet(viewsets.ModelViewSet):
         }
         
         try:
-            if doc_type == 'devis':
-                pdf_bytes = generate_devis_pdf(data)
-                filename = f"DEVIS_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
-                content_type = Document.DEVIS
-            else:
-                pdf_bytes = generate_recap_png(data)
-                filename = f"RECAP_{client_nom.replace(' ', '_')}_{demande.pk}.png"
-                content_type = Document.PNG
-                
-            # Création du Document
-            doc = Document.objects.create(
-                demande=demande,
-                type_document=content_type,
-                nom=filename,
-                created_by=request.user
-            )
-            # Sauvegarde du fichier physique
-            doc.fichier.save(filename, ContentFile(pdf_bytes))
-            
+            from .utils.document_helpers import generate_demande_document
+            doc = generate_demande_document(demande, doc_type, user=request.user)
             self._log_action(request.user, f'generate_{doc_type}', demande)
             return Response(DocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
-            
         except Exception as e:
             return Response({'error': str(e)}, status=500)
+
+    @action(detail=True, methods=['post'])
+    def send_whatsapp(self, request, pk=None):
+        """Action manuelle pour envoyer un document spécifique via WhatsApp."""
+        demande = self.get_object()
+        doc_type = request.data.get('type')  # 'devis' ou 'png'
+        
+        if not doc_type:
+            return Response({'error': 'Le type de document est requis.'}, status=400)
+            
+        # Trouver le dernier document de ce type
+        doc = demande.documents.filter(type_document=doc_type).first()
+        if not doc:
+            return Response({'error': f'Aucun document de type {doc_type} trouvé pour cette demande.'}, status=404)
+            
+        client_phone = demande.client.phone if demande.client else None
+        if not client_phone:
+            return Response({'error': 'Numéro de téléphone du client manquant.'}, status=400)
+            
+        # Construction de l'URL absolue
+        media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}"
+        client_name = demande.client.display_name if demande.client else "Client"
+        
+        # Variables du template
+        if doc_type == 'devis':
+            template = 'envoi_devis_client'
+            vars = [client_name, f"D-{demande.id:05d}", demande.service, f"{demande.prix}"]
+            wa_media_type = 'document'
+        else:
+            template = 'envoi_resume_client'
+            vars = [
+                client_name, 
+                demande.service, 
+                demande.date_intervention.strftime('%d/%m/%Y') if demande.date_intervention else "Non définie",
+                demande.heure_intervention or "—",
+                f"{demande.prix}"
+            ]
+            wa_media_type = 'image'
+            
+        res = WhatsAppService.send_template_message(
+            to=client_phone,
+            template_name=template,
+            media_url=media_url,
+            media_type=wa_media_type,
+            variables=vars
+        )
+        
+        if res:
+            self._log_action(request.user, f'send_wa_{doc_type}', demande)
+            return Response({'success': True, 'wa_response': res})
+        else:
+            return Response({'error': "Échec de l'envoi WhatsApp via l'API."}, status=500)
 
     def _log_action(self, user, action, demande):
         AuditLog.objects.create(

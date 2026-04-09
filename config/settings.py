@@ -195,3 +195,7 @@ SPECTACULAR_SETTINGS = {
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
 }
+# ─── 360 Dialog WhatsApp Integration ───────────────────────────────────────
+D360_API_KEY = config('D360_API_KEY', default='')
+API_BASE_URL = config('API_BASE_URL', default='http://localhost:8000').rstrip('/')
+D360_API_URL = config('D360_API_URL', default='https://waba-v2.360dialog.io/messages')

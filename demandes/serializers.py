@@ -1,5 +1,8 @@
 from rest_framework import serializers
 from .models import Demande, NRPLog, Document, AuditLog
+from django.conf import settings
+from .utils.whatsapp import WhatsAppService
+from .utils.document_helpers import generate_demande_document
 from .constants import get_segment_from_service
 from clients.serializers import ClientListSerializer
 from accounts.serializers import UserSerializer
@@ -164,7 +167,54 @@ class DemandeSerializer(serializers.ModelSerializer):
             target_client.segment = validated_data['segment']
             target_client.save()
                     
-        return super().update(instance, validated_data)
+        instance = super().update(instance, validated_data)
+
+        # ─── WhatsApp / Document Integration ───
+        if regenerer_devis or envoyer_whatsapp:
+            doc_type = 'devis' if (instance.segment == 'entreprise' or instance.is_devis) else 'png'
+            
+            # Step 1: Handle Document Generation (if requested or needed for WA)
+            doc = None
+            if regenerer_devis:
+                doc = generate_demande_document(instance, doc_type)
+            else:
+                # Get latest document of that type
+                doc = instance.documents.filter(type_document=doc_type).first()
+            
+            # Step 2: Send WhatsApp (if requested)
+            if envoyer_whatsapp:
+                client_phone = instance.client.phone if instance.client else None
+                if client_phone:
+                    # Construct absolute media URL
+                    media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}" if doc else None
+                    
+                    if media_url:
+                        client_name = instance.client.display_name if instance.client else "Client"
+                        # Variables based on the proposed templates
+                        if doc_type == 'devis':
+                            template = 'envoi_devis_client'
+                            vars = [client_name, f"D-{instance.id:05d}", instance.service, f"{instance.prix}"]
+                            wa_media_type = 'document'
+                        else:
+                            template = 'envoi_resume_client'
+                            vars = [
+                                client_name, 
+                                instance.service, 
+                                instance.date_intervention.strftime('%d/%m/%Y') if instance.date_intervention else "Non définie",
+                                instance.heure_intervention or "—",
+                                f"{instance.prix}"
+                            ]
+                            wa_media_type = 'image'
+                        
+                        WhatsAppService.send_template_message(
+                            to=client_phone,
+                            template_name=template,
+                            media_url=media_url,
+                            media_type=wa_media_type,
+                            variables=vars
+                        )
+
+        return instance
 
 
 class DemandeListSerializer(serializers.ModelSerializer):
