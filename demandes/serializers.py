@@ -6,6 +6,7 @@ from .utils.document_helpers import generate_demande_document
 from .constants import get_segment_from_service
 from clients.serializers import ClientListSerializer
 from accounts.serializers import UserSerializer
+from agents.serializers import AgentListSerializer
 
 
 class DocumentSerializer(serializers.ModelSerializer):
@@ -42,6 +43,7 @@ class DemandeSerializer(serializers.ModelSerializer):
     documents = DocumentSerializer(many=True, read_only=True)
     regenerer_devis = serializers.BooleanField(write_only=True, required=False, default=False)
     envoyer_whatsapp = serializers.BooleanField(write_only=True, required=False, default=False)
+    profils_envoyes = AgentListSerializer(many=True, read_only=True)
 
     class Meta:
         model = Demande
@@ -229,6 +231,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
     nrp_count = serializers.SerializerMethodField()
     documents = DocumentSerializer(many=True, read_only=True)
+    profils_envoyes = AgentListSerializer(many=True, read_only=True)
 
     class Meta:
         model = Demande
@@ -240,7 +243,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
-            'assigned_to_name', 'nrp_count', 'documents'
+            'assigned_to_name', 'nrp_count', 'documents', 'profils_envoyes'
         ]
 
     def get_nrp_count(self, obj):

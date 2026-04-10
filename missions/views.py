@@ -4,6 +4,7 @@ from rest_framework.permissions import IsAuthenticated
 from .models import Mission
 from .serializers import MissionSerializer
 from .filters import MissionFilter
+from demandes.models import AuditLog
 
 
 class MissionViewSet(viewsets.ModelViewSet):
@@ -14,4 +15,16 @@ class MissionViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
+        mission = serializer.save(created_by=self.request.user)
+        # Log for the agent
+        AuditLog.objects.create(
+            user=self.request.user,
+            action='Mission créée',
+            model_name='Mission',
+            object_id=mission.pk,
+            extra_data={
+                'agent_id': mission.agent.pk,
+                'demande_id': mission.demande.pk,
+                'client_name': mission.demande.client.display_name if mission.demande.client else 'Client'
+            }
+        )

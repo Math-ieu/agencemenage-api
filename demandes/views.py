@@ -82,7 +82,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Commercial introuvable'}, status=404)
         demande.assigned_to = commercial
         demande.save()
-        self._log_action(request.user, 'affecter', demande)
+        self._log_action(request.user, 'affecter', demande, extra_data={'commercial_id': commercial_id, 'commercial_name': commercial.full_name})
         return Response(DemandeSerializer(demande).data)
 
     @action(detail=True, methods=['post'])
@@ -181,13 +181,41 @@ class DemandeViewSet(viewsets.ModelViewSet):
         else:
             return Response({'error': "Échec de l'envoi WhatsApp via l'API."}, status=500)
 
-    def _log_action(self, user, action, demande):
+    @action(detail=True, methods=['post'])
+    def envoyer_profil(self, request, pk=None):
+        """Affecter/envoyer un profil agent à cette demande."""
+        demande = self.get_object()
+        agent_id = request.data.get('agent_id')
+        if not agent_id:
+            return Response({'error': 'agent_id requis'}, status=400)
+        from agents.models import Agent
+        try:
+            agent = Agent.objects.get(pk=agent_id)
+        except Agent.DoesNotExist:
+            return Response({'error': 'Profil introuvable'}, status=404)
+        
+        if demande.profils_envoyes.filter(pk=agent.pk).exists():
+            return Response({'error': 'Ce profil est déjà affecté à cette demande.'}, status=400)
+            
+        demande.profils_envoyes.add(agent)
+        self._log_action(request.user, 'envoyer_profil', demande, extra_data={
+            'agent_id': agent.pk,
+            'agent_name': agent.full_name,
+            'client_name': demande.client.display_name if demande.client else 'Inconnu'
+        })
+        return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk})
+
+    def _log_action(self, user, action, demande, extra_data=None):
+        data = {'statut': demande.statut}
+        if extra_data:
+            data.update(extra_data)
+            
         AuditLog.objects.create(
             user=user,
             action=action,
             model_name='Demande',
             object_id=demande.pk,
-            extra_data={'statut': demande.statut}
+            extra_data=data
         )
 
     @action(detail=True, methods=['get'], url_path=r'download/(?P<doc_id>\d+)')

@@ -100,6 +100,14 @@ class Demande(models.Model):
     # Confirmation avant opération
     cao = models.BooleanField(default=False, verbose_name="Confirmation avant opération")
 
+    # Profils envoyés pour cette demande
+    profils_envoyes = models.ManyToManyField(
+        'agents.Agent',
+        blank=True,
+        related_name='demandes_proposees',
+        verbose_name='Profils envoyés'
+    )
+
     # Notes
     note_commercial = models.TextField(blank=True)
     note_operationnel = models.TextField(blank=True)
