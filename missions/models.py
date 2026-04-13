@@ -18,12 +18,54 @@ class Mission(models.Model):
         (ANNULEE, 'Annulée'),
     ]
 
+    ENCAISSE_AGENCE = 'agence'
+    ENCAISSE_PROFIL = 'profil'
+    ENCAISSE_CHOICES = [
+        (ENCAISSE_AGENCE, 'Agence'),
+        (ENCAISSE_PROFIL, 'Profil'),
+    ]
+
+    PAIEMENT_NON_PAYE = 'non_paye'
+    PAIEMENT_EN_ATTENTE = 'en_attente'
+    PAIEMENT_EFFECTUE = 'effectue'
+    PAIEMENT_STATUT_CHOICES = [
+        (PAIEMENT_NON_PAYE, 'Non payé'),
+        (PAIEMENT_EN_ATTENTE, 'Paiement en attente'),
+        (PAIEMENT_EFFECTUE, 'Paiement effectué'),
+    ]
+
+    MODE_VIREMENT = 'virement'
+    MODE_CHEQUE = 'cheque'
+    MODE_ESPECES_AGENCE = 'especes_agence'
+    MODE_SUR_PLACE = 'sur_place'
+    MODE_CHOICES = [
+        (MODE_VIREMENT, 'Virement'),
+        (MODE_CHEQUE, 'Chèque'),
+        (MODE_ESPECES_AGENCE, "Espèces à l'agence"),
+        (MODE_SUR_PLACE, 'Sur place'),
+    ]
+
     demande = models.ForeignKey(Demande, on_delete=models.CASCADE, related_name='missions')
     agent = models.ForeignKey(Agent, on_delete=models.PROTECT, related_name='missions')
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default=EN_ATTENTE)
     date_debut = models.DateTimeField(null=True, blank=True)
     date_fin = models.DateTimeField(null=True, blank=True)
     notes = models.TextField(blank=True)
+
+    # Finance mission
+    encaisse_par = models.CharField(max_length=10, choices=ENCAISSE_CHOICES, default=ENCAISSE_AGENCE)
+    montant_paye = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    montant_encaisse_profil = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    mode_paiement_reel = models.CharField(max_length=20, choices=MODE_CHOICES, blank=True)
+    date_paiement = models.DateField(null=True, blank=True)
+    paiement_client_statut = models.CharField(max_length=20, choices=PAIEMENT_STATUT_CHOICES, default=PAIEMENT_NON_PAYE)
+    justificatif_financier = models.FileField(upload_to='missions/finance/', null=True, blank=True)
+
+    part_profil_versee = models.BooleanField(default=False)
+    date_versement_profil = models.DateField(null=True, blank=True)
+    part_agence_reversee = models.BooleanField(default=False)
+    date_remise_agence = models.DateField(null=True, blank=True)
+
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

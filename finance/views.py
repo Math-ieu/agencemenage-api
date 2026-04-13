@@ -3,6 +3,8 @@ from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
+from django.http import HttpResponse
+import csv
 from .models import Facture, Paiement, EntreeCaisse
 from .serializers import FactureSerializer, PaiementSerializer, EntreeCaisseSerializer
 from django.db.models import Sum, Q
@@ -91,3 +93,40 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
             'solde_jour': entrees_jour - sorties_jour,
             'operations_count': EntreeCaisse.objects.count()
         })
+
+    @action(detail=False, methods=['get'])
+    def export_csv(self, request):
+        """Exporte les mouvements de caisse en CSV en respectant les filtres courants."""
+        queryset = self.filter_queryset(self.get_queryset())
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="mouvements_caisse.csv"'
+        response.write('\ufeff')
+
+        writer = csv.writer(response, delimiter=';')
+        writer.writerow([
+            'Date',
+            'Type',
+            'Libelle',
+            'Client',
+            'Mode paiement',
+            'Montant (MAD)',
+            'Utilisateur',
+            'Document',
+            'Notes',
+        ])
+
+        for item in queryset:
+            writer.writerow([
+                item.date.strftime('%d/%m/%Y') if item.date else '',
+                item.get_type_mouvement_display(),
+                item.description,
+                item.client_display,
+                item.get_mode_paiement_display(),
+                str(item.montant),
+                item.utilisateur,
+                item.document_file.url if item.document_file else '',
+                item.notes,
+            ])
+
+        return response
