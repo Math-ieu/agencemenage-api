@@ -20,6 +20,10 @@ class FactureSerializer(serializers.ModelSerializer):
 
 
 class EntreeCaisseSerializer(serializers.ModelSerializer):
+    client_display = serializers.ReadOnlyField()
+    mode_paiement_display = serializers.CharField(source='get_mode_paiement_display', read_only=True)
+    type_mouvement_display = serializers.CharField(source='get_type_mouvement_display', read_only=True)
+
     class Meta:
         model = EntreeCaisse
         fields = '__all__'

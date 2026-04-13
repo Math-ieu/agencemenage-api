@@ -88,10 +88,27 @@ class EntreeCaisse(models.Model):
         (SORTIE, 'Sortie'),
     ]
 
+    VIREMENT = 'virement'
+    CHEQUE = 'cheque'
+    ESPECES = 'especes'
+    PAIEMENT_AGENCE = 'paiement_agence'
+    MODE_CHOICES = [
+        (ESPECES, 'Espèces'),
+        (VIREMENT, 'Virement'),
+        (CHEQUE, 'Chèque'),
+        (PAIEMENT_AGENCE, 'Paiement agence'),
+    ]
+
     type_mouvement = models.CharField(max_length=10, choices=TYPE_CHOICES)
     montant = models.DecimalField(max_digits=10, decimal_places=2)
     description = models.CharField(max_length=300)
     date = models.DateField()
+    mode_paiement = models.CharField(max_length=20, choices=MODE_CHOICES, default=ESPECES)
+    client = models.ForeignKey(Client, on_delete=models.SET_NULL, null=True, blank=True, related_name='mouvements_caisse')
+    client_nom = models.CharField(max_length=200, blank=True)
+    utilisateur = models.CharField(max_length=150, blank=True)
+    document_file = models.FileField(upload_to='finance/caisse/', null=True, blank=True)
+    notes = models.TextField(blank=True)
     paiement = models.ForeignKey(Paiement, on_delete=models.SET_NULL, null=True, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
@@ -107,3 +124,9 @@ class EntreeCaisse(models.Model):
 
     def __str__(self):
         return f"{self.get_type_mouvement_display()} {self.montant} MAD — {self.date}"
+
+    @property
+    def client_display(self):
+        if self.client:
+            return self.client.display_name
+        return self.client_nom or ''

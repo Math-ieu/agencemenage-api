@@ -29,8 +29,8 @@ class PaiementAdmin(admin.ModelAdmin):
 
 @admin.register(EntreeCaisse)
 class EntreeCaisseAdmin(admin.ModelAdmin):
-    list_display = ['date', 'type_mouvement', 'montant', 'description', 'created_by']
-    list_filter = ['type_mouvement', 'date']
-    search_fields = ['description']
-    raw_id_fields = ['paiement', 'created_by']
+    list_display = ['date', 'type_mouvement', 'montant', 'mode_paiement', 'client_nom', 'description', 'created_by']
+    list_filter = ['type_mouvement', 'mode_paiement', 'date']
+    search_fields = ['description', 'client_nom', 'utilisateur']
+    raw_id_fields = ['client', 'paiement', 'created_by']
     readonly_fields = ['created_at']
