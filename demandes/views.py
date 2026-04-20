@@ -5,17 +5,20 @@ from rest_framework.permissions import IsAuthenticated, AllowAny
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404
+from django.db.models import Model
+from django.db.models import Q
 from .models import Demande, NRPLog, Document, AuditLog
 from .utils.document_generators import generate_devis_pdf, generate_recap_png
 import datetime
 import mimetypes
 import os
+from decimal import Decimal
 from django.conf import settings
 from .utils.whatsapp import WhatsAppService
 from .serializers import (
     DemandeSerializer, DemandeListSerializer,
     NRPLogSerializer, DocumentSerializer,
-    PublicDemandeCreateSerializer, AuditLogSerializer
+    PublicDemandeCreateSerializer, AuditLogSerializer, DemandeHistoriqueSerializer
 )
 from accounts.serializers import UserSerializer
 from .filters import DemandeFilter
@@ -37,6 +40,61 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         serializer.save(assigned_to=self.request.user)
+
+    def perform_update(self, serializer):
+        instance = serializer.instance
+        validated_data = serializer.validated_data
+
+        changes = {}
+        for field_name, new_value in validated_data.items():
+            old_value = getattr(instance, field_name, None)
+            old_log_value = self._to_log_value(old_value)
+            new_log_value = self._to_log_value(new_value)
+            if old_log_value != new_log_value:
+                changes[field_name] = {
+                    'old': old_log_value,
+                    'new': new_log_value,
+                }
+
+        demande = serializer.save()
+
+        if changes:
+            self._log_action(
+                self.request.user,
+                'update',
+                demande,
+                extra_data={'changes': changes}
+            )
+
+    @action(detail=False, methods=['get'])
+    def historique(self, request):
+        queryset = Demande.objects.select_related('client').prefetch_related('profils_envoyes').order_by('-created_at')
+
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            query = (
+                Q(client__first_name__icontains=search)
+                | Q(client__last_name__icontains=search)
+                | Q(client__entity_name__icontains=search)
+                | Q(service__icontains=search)
+            )
+
+            search_ref = search.lstrip('#').strip()
+            if search_ref.isdigit():
+                query |= Q(id=int(search_ref))
+
+            queryset = queryset.filter(query)
+
+        date_value = (request.query_params.get('date') or '').strip()
+        if date_value:
+            queryset = queryset.filter(created_at__date=date_value)
+
+        page = self.paginate_queryset(queryset)
+        serializer = DemandeHistoriqueSerializer(page if page is not None else queryset, many=True)
+
+        if page is not None:
+            return self.get_paginated_response(serializer.data)
+        return Response(serializer.data)
 
     @action(detail=True, methods=['post'])
     def valider(self, request, pk=None):
@@ -217,6 +275,19 @@ class DemandeViewSet(viewsets.ModelViewSet):
             object_id=demande.pk,
             extra_data=data
         )
+
+    def _to_log_value(self, value):
+        if isinstance(value, Model):
+            return value.pk
+        if isinstance(value, Decimal):
+            return float(value)
+        if isinstance(value, (datetime.datetime, datetime.date, datetime.time)):
+            return value.isoformat()
+        if isinstance(value, dict):
+            return {k: self._to_log_value(v) for k, v in value.items()}
+        if isinstance(value, list):
+            return [self._to_log_value(item) for item in value]
+        return value
 
     @action(detail=True, methods=['get'], url_path=r'download/(?P<doc_id>\d+)')
     def download_document(self, request, pk=None, doc_id=None):

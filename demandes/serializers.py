@@ -250,6 +250,90 @@ class DemandeListSerializer(serializers.ModelSerializer):
         return obj.nrp_logs.count()
 
 
+class DemandeHistoriqueSerializer(serializers.ModelSerializer):
+    client_name = serializers.CharField(source='client.display_name', read_only=True)
+    profil_name = serializers.SerializerMethodField()
+    profil_id = serializers.SerializerMethodField()
+    statut_besoin_label = serializers.SerializerMethodField()
+    statut_paiement_label = serializers.SerializerMethodField()
+    statut_paiement_ui = serializers.SerializerMethodField()
+    motif = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Demande
+        fields = [
+            'id',
+            'client',
+            'client_name',
+            'service',
+            'segment',
+            'statut',
+            'statut_besoin_label',
+            'statut_paiement',
+            'statut_paiement_label',
+            'statut_paiement_ui',
+            'created_at',
+            'profil_name',
+            'profil_id',
+            'motif',
+        ]
+
+    def get_profil_name(self, obj):
+        profile = obj.profils_envoyes.order_by('id').first()
+        return profile.full_name if profile else ''
+
+    def get_profil_id(self, obj):
+        profile = obj.profils_envoyes.order_by('id').first()
+        return profile.id if profile else None
+
+    def get_statut_besoin_label(self, obj):
+        if obj.statut == Demande.EN_ATTENTE:
+            return 'Nouveau besoin'
+        if obj.statut == Demande.ENCOURS:
+            return 'En attente'
+        if obj.statut == Demande.TERMINE:
+            return 'Paye'
+        if obj.statut == Demande.ANNULE:
+            return 'Annule'
+        return obj.get_statut_display()
+
+    def get_statut_paiement_label(self, obj):
+        ui_value = self.get_statut_paiement_ui(obj)
+        ui_map = {
+            'non_confirme': 'Non confirme',
+            'paiement_en_attente': 'Paiement en attente',
+            'agence_payee_client': 'Agence payee / Client',
+            'profil_paye_client': 'profil_paye_client',
+            'paye': 'Paye',
+            'paiement_partiel': 'Paiement partiel',
+            'facturation_annulee': 'Facturation annulee',
+        }
+        if ui_value in ui_map:
+            return ui_map[ui_value]
+        return obj.get_statut_paiement_display()
+
+    def get_statut_paiement_ui(self, obj):
+        facturation = (obj.formulaire_data or {}).get('facturation', {})
+        ui_value = facturation.get('statut_paiement_ui')
+        if ui_value:
+            return ui_value
+
+        if facturation.get('facturation_annulee'):
+            return 'facturation_annulee'
+        if obj.statut_paiement == Demande.INTEGRAL:
+            return 'paye'
+        if obj.statut_paiement == Demande.ACOMPTE:
+            return 'paiement_en_attente'
+        if obj.statut_paiement == Demande.PARTIEL:
+            return 'paiement_partiel'
+        return 'non_confirme'
+
+    def get_motif(self, obj):
+        if obj.statut == Demande.ANNULE:
+            return obj.avis_annulation or ''
+        return ''
+
+
 class PublicDemandeCreateSerializer(serializers.ModelSerializer):
     """Serializer public (sans auth) pour créer une demande depuis le site web."""
     client_nom = serializers.CharField(write_only=True, required=False, allow_blank=True, allow_null=True)

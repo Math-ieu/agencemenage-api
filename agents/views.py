@@ -9,7 +9,7 @@ from rest_framework.response import Response
 
 
 class AgentViewSet(viewsets.ModelViewSet):
-    queryset = Agent.objects.all()
+    queryset = Agent.objects.filter(is_archived=False)
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = AgentFilter
     search_fields = ['first_name', 'last_name', 'phone', 'neighborhood', 'city', 'cin']
@@ -28,6 +28,11 @@ class AgentViewSet(viewsets.ModelViewSet):
     def perform_update(self, serializer):
         agent = serializer.save()
         self._log_action(self.request.user, 'Profil modifié', agent)
+
+    def perform_destroy(self, instance):
+        instance.is_archived = True
+        instance.save(update_fields=['is_archived'])
+        self._log_action(self.request.user, 'Profil archivé', instance)
 
     def _log_action(self, user, action, agent):
         AuditLog.objects.create(

@@ -32,6 +32,7 @@ class Client(models.Model):
     notes = models.TextField(blank=True)
     avis_commercial = models.TextField(blank=True, verbose_name="Avis commercial")
     avis_operationnel = models.TextField(blank=True, verbose_name="Avis opérationnel")
+    is_archived = models.BooleanField(default=False, db_index=True)
 
     class Meta:
         verbose_name = 'Client'

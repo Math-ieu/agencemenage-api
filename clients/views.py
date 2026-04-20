@@ -6,7 +6,7 @@ from .filters import ClientFilter
 
 
 class ClientViewSet(viewsets.ModelViewSet):
-    queryset = Client.objects.prefetch_related('demandes').all()
+    queryset = Client.objects.prefetch_related('demandes').filter(is_archived=False)
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = ClientFilter
     search_fields = ['first_name', 'last_name', 'entity_name', 'phone', 'email', 'neighborhood', 'city']
@@ -17,3 +17,7 @@ class ClientViewSet(viewsets.ModelViewSet):
         if self.action == 'list':
             return ClientListSerializer
         return ClientSerializer
+
+    def perform_destroy(self, instance):
+        instance.is_archived = True
+        instance.save(update_fields=['is_archived'])
