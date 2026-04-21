@@ -78,6 +78,9 @@ class DemandeSerializer(serializers.ModelSerializer):
             whatsapp = form_data.get('whatsapp_phone', '')
             if whatsapp:
                 defaults['whatsapp'] = whatsapp
+            email = form_data.get('email', '')
+            if email:
+                defaults['email'] = email
             if form_data.get('ville'):
                 defaults['city'] = form_data.get('ville')
             if form_data.get('quartier'):
@@ -133,6 +136,9 @@ class DemandeSerializer(serializers.ModelSerializer):
                 whatsapp = form_data.get('whatsapp_phone', '')
                 if whatsapp:
                     instance.client.whatsapp = whatsapp
+                email = form_data.get('email', '')
+                if email:
+                    instance.client.email = email
                 
                 if form_data.get('ville'):
                     instance.client.city = form_data.get('ville')

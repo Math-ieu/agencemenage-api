@@ -188,33 +188,46 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=500)
 
     @action(detail=True, methods=['post'])
+    @action(detail=True, methods=['post'])
     def send_whatsapp(self, request, pk=None):
         """Action manuelle pour envoyer un document spécifique via WhatsApp."""
         demande = self.get_object()
-        doc_type = request.data.get('type')  # 'devis' ou 'png'
+        doc_type = request.data.get('type')  # 'devis', 'png', 'cao_profil', 'feedback'
         
         if not doc_type:
             return Response({'error': 'Le type de document est requis.'}, status=400)
             
-        # Trouver le dernier document de ce type
-        doc = demande.documents.filter(type_document=doc_type).first()
-        if not doc:
-            return Response({'error': f'Aucun document de type {doc_type} trouvé pour cette demande.'}, status=404)
-            
         client_phone = demande.client.phone if demande.client else None
         if not client_phone:
-            return Response({'error': 'Numéro de téléphone du client manquant.'}, status=400)
-            
-        # Construction de l'URL absolue
-        media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}"
-        client_name = demande.client.display_name if demande.client else "Client"
+            # Essayer de récupérer le numéro depuis les données de formulaire
+            client_phone = demande.formulaire_data.get('whatsapp_phone') or demande.formulaire_data.get('phone')
+            if not client_phone:
+                return Response({'error': 'Numéro de téléphone du client manquant.'}, status=400)
+                
+        client_name = demande.client.display_name if demande.client else demande.client_name or demande.formulaire_data.get('nom', 'Client')
         
-        # Variables du template
+        # Initialisation
+        media_url = None
+        wa_media_type = None
+
+        # Feature flag "Bypass" : Ne pas envoyer réellement les nouveaux templates s'ils sont instables ou non validés
+        BYPASS_NEW_TEMPLATES = getattr(settings, 'BYPASS_NEW_WA_TEMPLATES', True)
+
+        # Pour les types utilisant un document (devis, png, cao_profil utilise png)
+        if doc_type in ['devis', 'png', 'cao_profil']:
+            doc_to_find = 'png' if doc_type == 'cao_profil' else doc_type
+            doc = demande.documents.filter(type_document=doc_to_find).first()
+            if not doc:
+                return Response({'error': f'Aucun document de type {doc_to_find} trouvé pour cette demande.'}, status=404)
+            media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}"
+            wa_media_type = 'document' if doc_type == 'devis' else 'image'
+
+        # Définition des templates et variables
         if doc_type == 'devis':
             template = 'envoi_devis_client'
             vars = [client_name, f"D-{demande.id:05d}", demande.service, f"{demande.prix}"]
-            wa_media_type = 'document'
-        else:
+            
+        elif doc_type == 'png':
             template = 'envoi_resume_client'
             vars = [
                 client_name, 
@@ -223,8 +236,30 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 demande.heure_intervention or "—",
                 f"{demande.prix}"
             ]
-            wa_media_type = 'image'
             
+        elif doc_type == 'cao_profil':
+            template = 'envoi_profil_candidate_v1'
+            agent = demande.profils_envoyes.last()
+            agent_id = agent.id if agent else "0"
+            profile_link = f"https://profile-creato.lovable.app/agent/{agent_id}"
+            vars = [client_name, profile_link]
+            
+            if BYPASS_NEW_TEMPLATES:
+                self._log_action(request.user, f'send_wa_{doc_type}_bypassed', demande, extra_data={'link': profile_link})
+                return Response({'success': True, 'bypassed': True, 'message': 'WhatsApp by-passé (mode dev/test).'})
+                
+        elif doc_type == 'feedback':
+            template = 'demande_feedback_client_v1'
+            feedback_link = f"https://feedback-love-note.lovable.app/feedback/demande-{demande.id}"
+            vars = [client_name, feedback_link]
+            
+            if BYPASS_NEW_TEMPLATES:
+                self._log_action(request.user, f'send_wa_{doc_type}_bypassed', demande, extra_data={'link': feedback_link})
+                return Response({'success': True, 'bypassed': True, 'message': 'WhatsApp by-passé (mode dev/test).'})
+        else:
+            return Response({'error': f"Type non supporté : {doc_type}"}, status=400)
+            
+        # Appel API réel
         res = WhatsAppService.send_template_message(
             to=client_phone,
             template_name=template,
