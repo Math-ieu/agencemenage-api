@@ -69,6 +69,7 @@ class Agent(models.Model):
     photo = models.ImageField(upload_to='agents/photos/', blank=True, null=True)
     cin_file = models.FileField(upload_to='agents/cin/', blank=True, null=True)
     attestation_file = models.FileField(upload_to='agents/attestations/', blank=True, null=True)
+    fiche_antropometrique = models.FileField(upload_to='agents/fiches_antropometriques/', blank=True, null=True)
     is_archived = models.BooleanField(default=False, db_index=True)
 
     class Meta:
