@@ -17,11 +17,15 @@ class Demande(models.Model):
     ENCOURS = 'en_cours'
     ANNULE = 'annule'
     TERMINE = 'termine'
+    PRES_EN_COURS = 'pres_en_cours'
+    PRES_TERMINEE = 'pres_terminee'
     STATUT_CHOICES = [
         (EN_ATTENTE, 'En attente'),
         (ENCOURS, 'En cours'),
         (ANNULE, 'Annulé'),
         (TERMINE, 'Terminé'),
+        (PRES_EN_COURS, 'Pres. en cours'),
+        (PRES_TERMINEE, 'Pres. terminée'),
     ]
 
     # Fréquences
