@@ -61,7 +61,7 @@ class Demande(models.Model):
         (NON_PAYE, 'Non payé'),
         (ACOMPTE, 'Acompte versé'),
         (PARTIEL, 'Paiement partiel'),
-        (INTEGRAL, 'Paiement intégral'),
+        (INTEGRAL, 'Payé'),
     ]
 
     # Core fields
