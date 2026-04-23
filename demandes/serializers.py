@@ -63,8 +63,8 @@ class DemandeSerializer(serializers.ModelSerializer):
         return obj.nrp_logs.count()
 
     def create(self, validated_data):
-        client_name = validated_data.get('client_name', '')
-        client_phone = validated_data.get('client_phone', '')
+        client_name = validated_data.pop('client_name', '')
+        client_phone = validated_data.pop('client_phone', '')
         
         # Pop non-model fields
         regenerer_devis = validated_data.pop('regenerer_devis', False)
@@ -128,8 +128,8 @@ class DemandeSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        client_name = validated_data.get('client_name', None)
-        client_phone = validated_data.get('client_phone', None)
+        client_name = validated_data.pop('client_name', None)
+        client_phone = validated_data.pop('client_phone', None)
         
         # Pop non-model fields
         regenerer_devis = validated_data.pop('regenerer_devis', False)
