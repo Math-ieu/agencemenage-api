@@ -58,6 +58,11 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         demande = serializer.save()
 
+        # AUTOMATION: Trigger feedback if status changed to PRES_TERMINEE
+        is_finished = changes.get('statut', {}).get('new') == Demande.PRES_TERMINEE
+        if is_finished:
+            self._trigger_automatic_feedback(demande)
+
         if changes:
             self._log_action(
                 self.request.user,
@@ -65,6 +70,39 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 demande,
                 extra_data={'changes': changes}
             )
+
+    def _trigger_automatic_feedback(self, demande):
+        """Internal helper to send automatic feedback WhatsApp message."""
+        client = demande.client
+        if client and client.opt_out_feedback:
+            # Client has unsubscribed
+            self._log_action(None, 'feedback_skip_optout', demande)
+            return
+
+        # Prepare variables for template 'demande_feedback_client_v1'
+        client_phone = client.phone if client else demande.formulaire_data.get('whatsapp_phone')
+        client_name = client.display_name if client else demande.formulaire_data.get('nom', 'Client')
+        
+        if not client_phone:
+            return
+
+        from agencemenage.utils import encode_id
+        encoded_id = encode_id(demande.id)
+        feedback_link = f"https://feedback.agencemenage.ma/feedback/{encoded_id}"
+        vars = [client_name, feedback_link]
+
+        try:
+            from .utils.whatsapp import WhatsAppService
+            WhatsAppService.send_template_message(
+                to=client_phone,
+                template_name='demande_feedback_client_v1',
+                variables=vars
+            )
+            self._log_action(None, 'auto_send_wa_feedback', demande)
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Error sending auto feedback WA: {str(e)}")
 
     @action(detail=False, methods=['get'])
     def historique(self, request):
@@ -249,8 +287,9 @@ class DemandeViewSet(viewsets.ModelViewSet):
             vars = [client_name, profile_link]
             
         elif doc_type == 'feedback':
-            template = 'demande_feedback_client_v1'
-            feedback_link = f"https://feedback.agencemenage.ma/feedback/{demande.id}"
+            from agencemenage.utils import encode_id
+            encoded_id = encode_id(demande.id)
+            feedback_link = f"https://feedback.agencemenage.ma/feedback/{encoded_id}"
             vars = [client_name, feedback_link]
         else:
             return Response({'error': f"Type non supporté : {doc_type}"}, status=400)
