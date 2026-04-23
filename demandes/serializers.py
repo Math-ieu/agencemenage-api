@@ -63,8 +63,8 @@ class DemandeSerializer(serializers.ModelSerializer):
         return obj.nrp_logs.count()
 
     def create(self, validated_data):
-        client_name = validated_data.pop('client_name', '')
-        client_phone = validated_data.pop('client_phone', '')
+        client_name = validated_data.get('client_name', '')
+        client_phone = validated_data.get('client_phone', '')
         
         # Pop non-model fields
         regenerer_devis = validated_data.pop('regenerer_devis', False)
@@ -73,7 +73,10 @@ class DemandeSerializer(serializers.ModelSerializer):
         client = None
         if client_phone or client_name:
             from clients.models import Client
-            defaults = {'last_name': client_name}
+            defaults = {
+                'last_name': client_name if validated_data.get('segment') == Client.PARTICULIER else '',
+                'entity_name': client_name if validated_data.get('segment') == Client.ENTREPRISE else '',
+            }
             form_data = validated_data.get('formulaire_data', {})
             whatsapp = form_data.get('whatsapp_phone', '')
             if whatsapp:
@@ -89,7 +92,15 @@ class DemandeSerializer(serializers.ModelSerializer):
                 defaults['address'] = form_data.get('adresse')
 
             if client_phone:
-                client, _ = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
+                client, created = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
+                # Si le client existait déjà mais n'avait pas de nom, on le met à jour
+                if not created and client_name:
+                    if client.segment == Client.ENTREPRISE and not client.entity_name:
+                        client.entity_name = client_name
+                        client.save()
+                    elif client.segment == Client.PARTICULIER and not client.last_name:
+                        client.last_name = client_name
+                        client.save()
             else:
                 client = Client.objects.create(**defaults)
         
@@ -117,8 +128,8 @@ class DemandeSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
-        client_name = validated_data.pop('client_name', None)
-        client_phone = validated_data.pop('client_phone', None)
+        client_name = validated_data.get('client_name', None)
+        client_phone = validated_data.get('client_phone', None)
         
         # Pop non-model fields
         regenerer_devis = validated_data.pop('regenerer_devis', False)

@@ -279,6 +279,9 @@ class DemandeViewSet(viewsets.ModelViewSet):
             wa_media_type = 'document' if doc_type == 'devis' else 'image'
 
         # Définition des templates et variables
+        template = None
+        vars = []
+
         if doc_type == 'devis':
             template = 'envoi_devis_client'
             vars = [client_name, f"D-{demande.id:05d}", demande.service, f"{demande.prix}"]
@@ -297,20 +300,25 @@ class DemandeViewSet(viewsets.ModelViewSet):
             template = 'envoi_profil_candidate_v1'
             agent = demande.profils_envoyes.last()
             if agent:
+                from .models import ProfilShare
                 share, _ = ProfilShare.objects.get_or_create(demande=demande, agent=agent)
-                share_code = share.uuid
+                share_code = str(share.uuid)
             else:
                 share_code = "0"
             profile_link = f"https://profil.agencemenage.ma/view/{share_code}"
             vars = [client_name, profile_link]
             
         elif doc_type == 'feedback':
+            template = 'demande_feedback_client_v1'
             from agencemenage.utils import encode_id
             encoded_id = encode_id(demande.id)
             feedback_link = f"https://feedback.agencemenage.ma/feedback/{encoded_id}"
             vars = [client_name, feedback_link]
         else:
             return Response({'error': f"Type non supporté : {doc_type}"}, status=400)
+            
+        if not template:
+            return Response({'error': f"Template non défini pour le type {doc_type}"}, status=500)
             
         # Appel API réel
         res = WhatsAppService.send_template_message(
