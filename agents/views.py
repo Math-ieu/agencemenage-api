@@ -18,7 +18,21 @@ class AgentViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_permissions(self):
-        if self.action in ['retrieve', 'by_share']:
+        if self.action == 'retrieve':
+            lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+            lookup_value = self.kwargs.get(lookup_url_kwarg)
+            
+            # Allow public access ONLY for UUID lookups
+            import uuid
+            try:
+                if lookup_value:
+                    uuid.UUID(str(lookup_value))
+                    return [AllowAny()]
+            except ValueError:
+                # If it's an integer ID, require authentication
+                return [IsAuthenticated()]
+                
+        if self.action == 'by_share':
             return [AllowAny()]
         return [IsAuthenticated()]
 
