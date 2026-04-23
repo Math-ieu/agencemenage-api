@@ -22,6 +22,7 @@ from .serializers import (
 )
 from accounts.serializers import UserSerializer
 from .filters import DemandeFilter
+from .utils.profile_card import generate_profile_card
 
 
 class DemandeViewSet(viewsets.ModelViewSet):
@@ -251,12 +252,22 @@ class DemandeViewSet(viewsets.ModelViewSet):
         # Feature flag "Bypass" : Ne pas envoyer réellement les nouveaux templates s'ils sont instables ou non validés
         BYPASS_NEW_TEMPLATES = getattr(settings, 'BYPASS_NEW_WA_TEMPLATES', False)
 
-        # Pour les types utilisant un document (devis, png, cao_profil utilise png)
+        # Pour les types utilisant un document (devis, png, cao_profil)
         if doc_type in ['devis', 'png', 'cao_profil']:
-            doc_to_find = 'png' if doc_type == 'cao_profil' else doc_type
-            doc = demande.documents.filter(type_document=doc_to_find).first()
+            # Pour cao_profil, on cherche d'abord s'il y a un document PNG spécifique généré pour l'agent
+            if doc_type == 'cao_profil':
+                agent = demande.profils_envoyes.last()
+                doc = demande.documents.filter(
+                    type_document='png',
+                    nom__icontains=agent.last_name if agent else ""
+                ).first()
+                if not doc:
+                     doc = demande.documents.filter(type_document='png').first()
+            else:
+                doc = demande.documents.filter(type_document=doc_type).first()
+
             if not doc:
-                return Response({'error': f'Aucun document de type {doc_to_find} trouvé pour cette demande.'}, status=404)
+                return Response({'error': f'Aucun document de type {doc_type} trouvé pour cette demande.'}, status=404)
             media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}"
             wa_media_type = 'document' if doc_type == 'devis' else 'image'
 
@@ -332,6 +343,50 @@ class DemandeViewSet(viewsets.ModelViewSet):
         demande.profils_envoyes.add(agent)
         share = ProfilShare.objects.create(demande=demande, agent=agent)
         
+        # --- GÉNÉRATION FICHE PROFIL PNG ---
+        try:
+            # Calcul de l'âge
+            age = "—"
+            if agent.birth_date:
+                today = datetime.date.today()
+                age = today.year - agent.birth_date.year - ((today.month, today.day) < (agent.birth_date.month, agent.birth_date.day))
+            
+            # Chemins
+            logo_path = os.path.join(settings.BASE_DIR, 'assets', 'logo.png')
+            photo_path = agent.photo.path if agent.photo else None
+            
+            # On génère un nom de fichier unique
+            filename = f"FICHE_{agent.first_name}_{agent.last_name}_{demande.id}.png".replace(' ', '_')
+            output_dir = os.path.join(settings.MEDIA_ROOT, 'documents', datetime.datetime.now().strftime("%Y/%m"))
+            os.makedirs(output_dir, exist_ok=True)
+            output_path = os.path.join(output_dir, filename)
+            
+            if photo_path and os.path.exists(photo_path):
+                generate_profile_card(
+                    nom=agent.last_name,
+                    prenom=agent.first_name,
+                    age=age if isinstance(age, int) else 30,
+                    adresse=f"{agent.neighborhood} - {agent.city}",
+                    logo_path=logo_path,
+                    profile_photo_path=photo_path,
+                    output_path=output_path
+                )
+                
+                # Enregistrement en tant que Document
+                relative_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
+                Document.objects.create(
+                    demande=demande,
+                    type_document='png',
+                    nom=f"Fiche Profil {agent.full_name}",
+                    fichier=relative_path,
+                    created_by=request.user
+                )
+        except Exception as e:
+            # On log l'erreur sans bloquer le reste (le partage de lien est prioritaire)
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"Erreur lors de la génération de la fiche profil : {str(e)}")
+
         self._log_action(request.user, 'envoyer_profil', demande, extra_data={
             'agent_id': agent.pk,
             'agent_name': agent.full_name,
