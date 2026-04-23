@@ -25,7 +25,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         city = self.request.query_params.get('city')
         if city:
-            qs = qs.filter(demande__neighborhood_city__icontains=city)
+            qs = qs.filter(demande__client__city__icontains=city)
         return qs
 
     @action(detail=False, methods=['get'])
