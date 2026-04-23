@@ -175,7 +175,7 @@ AUTH_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
 CORS_ALLOWED_ORIGINS = [
     origin.rstrip('/') for origin in config(
         'CORS_ALLOWED_ORIGINS',
-        default='http://localhost:3000,http://localhost:5173'
+        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
     ).split(',') if origin
 ]
 
@@ -184,7 +184,7 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     origin.rstrip('/') for origin in config(
         'CSRF_TRUSTED_ORIGINS',
-        default='http://localhost:3000,http://localhost:5173'
+        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
     ).split(',') if origin
 ]
 

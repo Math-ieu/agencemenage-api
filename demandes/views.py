@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404
 from django.db.models import Model
 from django.db.models import Q
-from .models import Demande, NRPLog, Document, AuditLog
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare
 from .utils.document_generators import generate_devis_pdf, generate_recap_png
 import datetime
 import mimetypes
@@ -211,7 +211,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
         wa_media_type = None
 
         # Feature flag "Bypass" : Ne pas envoyer réellement les nouveaux templates s'ils sont instables ou non validés
-        BYPASS_NEW_TEMPLATES = getattr(settings, 'BYPASS_NEW_WA_TEMPLATES', True)
+        BYPASS_NEW_TEMPLATES = getattr(settings, 'BYPASS_NEW_WA_TEMPLATES', False)
 
         # Pour les types utilisant un document (devis, png, cao_profil utilise png)
         if doc_type in ['devis', 'png', 'cao_profil']:
@@ -240,22 +240,18 @@ class DemandeViewSet(viewsets.ModelViewSet):
         elif doc_type == 'cao_profil':
             template = 'envoi_profil_candidate_v1'
             agent = demande.profils_envoyes.last()
-            agent_id = agent.id if agent else "0"
-            profile_link = f"https://profile-creato.lovable.app/agent/{agent_id}"
+            if agent:
+                share, _ = ProfilShare.objects.get_or_create(demande=demande, agent=agent)
+                share_code = share.uuid
+            else:
+                share_code = "0"
+            profile_link = f"https://profil.agencemenage.ma/view/{share_code}"
             vars = [client_name, profile_link]
             
-            if BYPASS_NEW_TEMPLATES:
-                self._log_action(request.user, f'send_wa_{doc_type}_bypassed', demande, extra_data={'link': profile_link})
-                return Response({'success': True, 'bypassed': True, 'message': 'WhatsApp by-passé (mode dev/test).'})
-                
         elif doc_type == 'feedback':
             template = 'demande_feedback_client_v1'
-            feedback_link = f"https://feedback-love-note.lovable.app/feedback/demande-{demande.id}"
+            feedback_link = f"https://feedback.agencemenage.ma/feedback/{demande.id}"
             vars = [client_name, feedback_link]
-            
-            if BYPASS_NEW_TEMPLATES:
-                self._log_action(request.user, f'send_wa_{doc_type}_bypassed', demande, extra_data={'link': feedback_link})
-                return Response({'success': True, 'bypassed': True, 'message': 'WhatsApp by-passé (mode dev/test).'})
         else:
             return Response({'error': f"Type non supporté : {doc_type}"}, status=400)
             
@@ -288,15 +284,22 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return Response({'error': 'Profil introuvable'}, status=404)
         
         if demande.profils_envoyes.filter(pk=agent.pk).exists():
-            return Response({'error': 'Ce profil est déjà affecté à cette demande.'}, status=400)
+            # Return existing share if any, or create one
+            share = ProfilShare.objects.filter(demande=demande, agent=agent).first()
+            if not share:
+                share = ProfilShare.objects.create(demande=demande, agent=agent)
+            return Response({'success': True, 'message': 'Profil déjà envoyé.', 'share_id': share.uuid})
             
         demande.profils_envoyes.add(agent)
+        share = ProfilShare.objects.create(demande=demande, agent=agent)
+        
         self._log_action(request.user, 'envoyer_profil', demande, extra_data={
             'agent_id': agent.pk,
             'agent_name': agent.full_name,
+            'share_id': str(share.uuid),
             'client_name': demande.client.display_name if demande.client else 'Inconnu'
         })
-        return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk})
+        return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk, 'share_id': share.uuid})
 
     def _log_action(self, user, action, demande, extra_data=None):
         data = {'statut': demande.statut}

@@ -14,15 +14,33 @@ class FeedbackViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         feedback = serializer.save()
-        # Log for the agent
+        
+        # Determine agent ID for logging if mission exists
+        agent_id = None
+        if feedback.mission and feedback.mission.agent:
+            agent_id = feedback.mission.agent.pk
+        elif feedback.demande:
+            # Fallback to last profile sent for this demande
+            last_agent = feedback.demande.profils_envoyes.last()
+            if last_agent:
+                agent_id = last_agent.pk
+
+        # Log action
+        client_name = 'Client'
+        if feedback.client:
+            client_name = feedback.client.display_name
+        elif feedback.demande:
+            client_name = feedback.demande.client_name or 'Client'
+
         AuditLog.objects.create(
-            user=self.request.user,
+            user=self.request.user if self.request.user.is_authenticated else None,
             action='Feedback reçu',
             model_name='Feedback',
             object_id=feedback.pk,
             extra_data={
-                'agent_id': feedback.mission.agent.pk,
-                'note': feedback.note,
-                'client_name': feedback.client.display_name if feedback.client else 'Client'
+                'agent_id': agent_id,
+                'note_intervenant': feedback.note_intervenant,
+                'note_agence': feedback.note_agence,
+                'client_name': client_name
             }
         )

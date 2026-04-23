@@ -215,3 +215,19 @@ class AuditLog(models.Model):
 
     def __str__(self):
         return f"{self.action} — {self.model_name} #{self.object_id}"
+
+
+class ProfilShare(models.Model):
+    """Lien unique généré pour partager un profil agent spécifique pour une demande."""
+    import uuid
+    uuid = models.UUIDField(default=uuid.uuid4, unique=True, db_index=True, editable=False)
+    demande = models.ForeignKey(Demande, on_delete=models.CASCADE, related_name='shares')
+    agent = models.ForeignKey('agents.Agent', on_delete=models.CASCADE, related_name='shares')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Partage de profil'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"Partage {self.agent} pour {self.demande}"

@@ -1,9 +1,10 @@
 from rest_framework import viewsets, filters
 from django_filters.rest_framework import DjangoFilterBackend
+from rest_framework.permissions import IsAuthenticated, AllowAny
 from .models import Agent
 from .serializers import AgentSerializer, AgentListSerializer
 from .filters import AgentFilter
-from demandes.models import AuditLog
+from demandes.models import AuditLog, ProfilShare
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -15,6 +16,25 @@ class AgentViewSet(viewsets.ModelViewSet):
     search_fields = ['first_name', 'last_name', 'phone', 'neighborhood', 'city', 'cin']
     ordering_fields = ['created_at', 'last_name']
     ordering = ['-created_at']
+
+    def get_permissions(self):
+        if self.action in ['retrieve', 'by_share']:
+            return [AllowAny()]
+        return [IsAuthenticated()]
+
+    def get_object(self):
+        """Allow lookup by ID or UUID."""
+        queryset = self.filter_queryset(self.get_queryset())
+        lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
+        lookup_value = self.kwargs[lookup_url_kwarg]
+
+        # Check if lookup_value is a valid UUID
+        import uuid
+        try:
+            uuid_obj = uuid.UUID(lookup_value)
+            return queryset.get(uuid=uuid_obj)
+        except (ValueError, Agent.DoesNotExist):
+            return super().get_object()
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -71,3 +91,20 @@ class AgentViewSet(viewsets.ModelViewSet):
         from demandes.serializers import AuditLogSerializer
         serializer = AuditLogSerializer(combined_logs, many=True)
         return Response(serializer.data)
+
+    @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='by-share/(?P<share_uuid>[^/.]+)')
+    def by_share(self, request, share_uuid=None):
+        """Récupérer un profil via son lien de partage unique."""
+        try:
+            share = ProfilShare.objects.select_related('agent', 'demande').get(uuid=share_uuid)
+        except (ProfilShare.DoesNotExist, ValueError):
+            return Response({'error': 'Lien invalide ou expiré'}, status=404)
+        
+        serializer = AgentSerializer(share.agent)
+        # On peut ajouter des infos de contexte (demande) si besoin
+        data = serializer.data
+        data['demande_context'] = {
+            'service': share.demande.service,
+            'client_name': share.demande.client.display_name if share.demande.client else 'Inconnu'
+        }
+        return Response(data)

@@ -1,7 +1,9 @@
 from django.db import models
+import uuid
 
 
 class Agent(models.Model):
+    uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
     DISPONIBLE = 'disponible'
     NON_DISPONIBLE = 'non_disponible'
 
