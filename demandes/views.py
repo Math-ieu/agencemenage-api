@@ -254,21 +254,28 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         # Pour les types utilisant un document (devis, png, cao_profil)
         if doc_type in ['devis', 'png', 'cao_profil']:
-            # Pour cao_profil, on cherche d'abord s'il y a un document PNG spécifique généré pour l'agent
+            # Pour cao_profil, on cherche le PNG de la fiche profil
             if doc_type == 'cao_profil':
-                agent = demande.profils_envoyes.last()
-                doc = demande.documents.filter(
-                    type_document='png',
-                    nom__icontains=agent.last_name if agent else ""
-                ).first()
-                if not doc:
-                     doc = demande.documents.filter(type_document='png').first()
+                # On prend le document PNG le plus récent (la fiche profil générée)
+                doc = demande.documents.filter(type_document='png').order_by('-created_at').first()
             else:
-                doc = demande.documents.filter(type_document=doc_type).first()
+                doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
 
             if not doc:
-                return Response({'error': f'Aucun document de type {doc_type} trouvé pour cette demande.'}, status=404)
-            media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}"
+                # Si c'est un cao_profil et qu'on n'a pas encore de PNG, on peut soit générer à la volée, 
+                # soit renvoyer une 404. Pour l'instant on garde la 404 mais avec un message clair.
+                return Response({'error': f'Aucun fichier visuelle (PNG) trouvé pour ce profil. Veuillez le ré-affecter pour générer sa fiche.'}, status=404)
+            
+            # Correction de l'URL pour la prod : assurer que c'est une URL publique accessible
+            # En production avec S3, doc.fichier.name contient déjà le chemin relatif.
+            # On s'assure de ne pas avoir de double slash et de passer par le proxy /api/media/
+            media_path = doc.fichier.name.lstrip('/')
+            media_url = f"{settings.API_BASE_URL}/api/media/{media_path}"
+            
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.info(f"WhatsApp Media URL generated: {media_url} for type {doc_type}")
+            
             wa_media_type = 'document' if doc_type == 'devis' else 'image'
 
         # Définition des templates et variables
@@ -361,26 +368,26 @@ class DemandeViewSet(viewsets.ModelViewSet):
             os.makedirs(output_dir, exist_ok=True)
             output_path = os.path.join(output_dir, filename)
             
-            if photo_path and os.path.exists(photo_path):
-                generate_profile_card(
-                    nom=agent.last_name,
-                    prenom=agent.first_name,
-                    age=age if isinstance(age, int) else 30,
-                    adresse=f"{agent.neighborhood} - {agent.city}",
-                    logo_path=logo_path,
-                    profile_photo_path=photo_path,
-                    output_path=output_path
-                )
-                
-                # Enregistrement en tant que Document
-                relative_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
-                Document.objects.create(
-                    demande=demande,
-                    type_document='png',
-                    nom=f"Fiche Profil {agent.full_name}",
-                    fichier=relative_path,
-                    created_by=request.user
-                )
+            # On génère la fiche systématiquement (le générateur gère l'absence de photo)
+            generate_profile_card(
+                nom=agent.last_name,
+                prenom=agent.first_name,
+                age=age if isinstance(age, int) else 30,
+                adresse=f"{agent.neighborhood} - {agent.city}",
+                logo_path=logo_path,
+                profile_photo_path=photo_path if photo_path and os.path.exists(photo_path) else "",
+                output_path=output_path
+            )
+            
+            # Enregistrement en tant que Document
+            relative_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
+            Document.objects.create(
+                demande=demande,
+                type_document='png',
+                nom=f"Fiche Profil {agent.full_name}",
+                fichier=relative_path,
+                created_by=request.user
+            )
         except Exception as e:
             # On log l'erreur sans bloquer le reste (le partage de lien est prioritaire)
             import logging
