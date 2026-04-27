@@ -5,6 +5,7 @@ class DemandeFilter(django_filters.FilterSet):
     date_debut = django_filters.DateFilter(field_name="created_at", lookup_expr='gte')
     date_fin = django_filters.DateFilter(field_name="created_at", lookup_expr='lte')
     commercial = django_filters.CharFilter(field_name="assigned_to__id")
+    exclude_statut = django_filters.CharFilter(field_name='statut', exclude=True)
 
     class Meta:
         model = Demande

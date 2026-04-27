@@ -122,7 +122,7 @@ class DemandeSerializer(serializers.ModelSerializer):
             
         # Sync preference_horaire from formulaire_data if present
         form_data = validated_data.get('formulaire_data', {})
-        if 'preference_horaire' in form_data and not validated_data.get('preference_horaire'):
+        if 'preference_horaire' in form_data:
             validated_data['preference_horaire'] = form_data['preference_horaire']
 
         return super().create(validated_data)
@@ -168,9 +168,8 @@ class DemandeSerializer(serializers.ModelSerializer):
                     instance.client = Client.objects.create(**defaults)
         
         if 'formulaire_data' in validated_data:
-            pref = validated_data['formulaire_data'].get('preference_horaire')
-            if pref:
-                instance.preference_horaire = pref
+            if 'preference_horaire' in validated_data['formulaire_data']:
+                instance.preference_horaire = validated_data['formulaire_data']['preference_horaire']
         
         # Automate segmentation on update
         service = validated_data.get('service', instance.service)
