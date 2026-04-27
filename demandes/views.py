@@ -235,6 +235,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
         """Action manuelle pour envoyer un document spécifique via WhatsApp."""
         demande = self.get_object()
         doc_type = request.data.get('type')  # 'devis', 'png', 'cao_profil', 'feedback'
+        profile_agent_id = request.data.get('profile_agent_id')
         
         if not doc_type:
             return Response({'error': 'Le type de document est requis.'}, status=400)
@@ -255,14 +256,9 @@ class DemandeViewSet(viewsets.ModelViewSet):
         # Feature flag "Bypass" : Ne pas envoyer réellement les nouveaux templates s'ils sont instables ou non validés
         BYPASS_NEW_TEMPLATES = getattr(settings, 'BYPASS_NEW_WA_TEMPLATES', False)
 
-        # Pour les types utilisant un document (devis, png, cao_profil)
-        if doc_type in ['devis', 'png', 'cao_profil']:
-            # Pour cao_profil, on cherche le PNG de la fiche profil
-            if doc_type == 'cao_profil':
-                # On prend le document PNG le plus récent (la fiche profil générée)
-                doc = demande.documents.filter(type_document='png').order_by('-created_at').first()
-            else:
-                doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
+        # Pour les types utilisant un document (devis, png)
+        if doc_type in ['devis', 'png']:
+            doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
 
             if not doc:
                 # Si c'est un cao_profil et qu'on n'a pas encore de PNG, on peut soit générer à la volée, 
@@ -301,15 +297,58 @@ class DemandeViewSet(viewsets.ModelViewSet):
             
         elif doc_type == 'cao_profil':
             template = 'envoi_profil_candidate_v1'
-            agent = demande.profils_envoyes.last()
-            if agent:
-                from .models import ProfilShare
+            profiles = demande.profils_envoyes.order_by('id')
+
+            if profile_agent_id:
+                profiles = profiles.filter(pk=profile_agent_id)
+
+            if not profiles.exists():
+                return Response({'error': 'Aucun profil assigné pour cet envoi.'}, status=400)
+
+            results = []
+            success_count = 0
+
+            for agent in profiles:
                 share, _ = ProfilShare.objects.get_or_create(demande=demande, agent=agent)
-                share_code = str(share.uuid)
-            else:
-                share_code = "0"
-            profile_link = f"https://profil.agencemenage.ma/view/{share_code}"
-            vars = [client_name, profile_link]
+                profile_link = f"https://profil.agencemenage.ma/view/{share.uuid}"
+                vars = [client_name, profile_link]
+
+                res = WhatsAppService.send_template_message(
+                    to=client_phone,
+                    template_name=template,
+                    media_url=None,
+                    media_type=None,
+                    variables=vars
+                )
+
+                sent = bool(res)
+                if sent:
+                    success_count += 1
+                    self._log_action(
+                        request.user,
+                        f'send_wa_{doc_type}',
+                        demande,
+                        extra_data={
+                            'agent_id': agent.id,
+                            'agent_name': getattr(agent, 'full_name', '') or f"{agent.first_name} {agent.last_name}".strip(),
+                        }
+                    )
+
+                results.append({
+                    'agent_id': agent.id,
+                    'agent_name': getattr(agent, 'full_name', '') or f"{agent.first_name} {agent.last_name}".strip(),
+                    'success': sent,
+                })
+
+            if success_count > 0:
+                return Response({
+                    'success': True,
+                    'sent_count': success_count,
+                    'total': profiles.count(),
+                    'results': results,
+                })
+
+            return Response({'error': "Échec de l'envoi WhatsApp via l'API.", 'results': results}, status=500)
             
         elif doc_type == 'feedback':
             template = 'demande_feedback_client_v1'

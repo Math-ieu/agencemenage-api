@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Demande, NRPLog, Document, AuditLog
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare
 from django.conf import settings
 from .utils.whatsapp import WhatsAppService
 from .utils.document_helpers import generate_demande_document
@@ -246,6 +246,8 @@ class DemandeListSerializer(serializers.ModelSerializer):
     mode_paiement_label = serializers.CharField(source='get_mode_paiement_display', read_only=True)
     statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
     nrp_count = serializers.SerializerMethodField()
+    profil_share_link = serializers.SerializerMethodField()
+    profil_share_links = serializers.SerializerMethodField()
     documents = DocumentSerializer(many=True, read_only=True)
     profils_envoyes = AgentListSerializer(many=True, read_only=True)
 
@@ -259,11 +261,33 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
-            'assigned_to_name', 'nrp_count', 'documents', 'profils_envoyes'
+            'assigned_to_name', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes'
         ]
 
     def get_nrp_count(self, obj):
         return obj.nrp_logs.count()
+
+    def get_profil_share_link(self, obj):
+        agent = obj.profils_envoyes.order_by('id').last()
+        if not agent:
+            return ''
+
+        share, _ = ProfilShare.objects.get_or_create(demande=obj, agent=agent)
+        return f"https://profil.agencemenage.ma/view/{share.uuid}"
+
+    def get_profil_share_links(self, obj):
+        agents = obj.profils_envoyes.order_by('id')
+        links = []
+
+        for agent in agents:
+            share, _ = ProfilShare.objects.get_or_create(demande=obj, agent=agent)
+            links.append({
+                'agent_id': agent.id,
+                'agent_name': getattr(agent, 'full_name', '') or f"{agent.first_name} {agent.last_name}".strip(),
+                'link': f"https://profil.agencemenage.ma/view/{share.uuid}",
+            })
+
+        return links
 
 
 class DemandeHistoriqueSerializer(serializers.ModelSerializer):
