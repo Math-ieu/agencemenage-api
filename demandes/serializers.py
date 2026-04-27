@@ -307,7 +307,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
         if obj.statut == Demande.EN_ATTENTE:
             return 'Nouveau besoin'
         if obj.statut == Demande.ENCOURS:
-            return 'En attente'
+            return 'Confirmé' if obj.cao else 'En attente'
         if obj.statut == Demande.TERMINE:
             return 'Paye'
         if obj.statut == Demande.ANNULE:

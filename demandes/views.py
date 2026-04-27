@@ -59,10 +59,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         demande = serializer.save()
 
-        # AUTOMATION: Trigger feedback if status changed to PRES_TERMINEE
+        # AUTOMATION: Trigger feedback and update payment status if status changed to PRES_TERMINEE
         is_finished = changes.get('statut', {}).get('new') == Demande.PRES_TERMINEE
         if is_finished:
+            demande.statut_paiement = Demande.ACOMPTE
+            demande.save(update_fields=['statut_paiement'])
             self._trigger_automatic_feedback(demande)
+
 
         if changes:
             self._log_action(
