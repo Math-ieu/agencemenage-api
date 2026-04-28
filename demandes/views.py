@@ -139,6 +139,32 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'])
+    def notifications_urgentes(self, request):
+        from django.utils import timezone
+        import datetime
+        limit_date = timezone.now() - datetime.timedelta(hours=20)
+        
+        urgentes = Demande.objects.select_related('client').filter(
+            statut=Demande.EN_ATTENTE, 
+            created_at__lte=limit_date
+        ).order_by('created_at')
+        
+        data = []
+        for d in urgentes:
+            diff = timezone.now() - d.created_at
+            hours = int(diff.total_seconds() // 3600)
+            client_name = d.client.display_name if d.client else d.formulaire_data.get('nom', 'Client')
+            data.append({
+                'id': d.id,
+                'client': client_name,
+                'service': d.service,
+                'hours_pending': hours,
+                'created_at': d.created_at.isoformat()
+            })
+            
+        return Response(data)
+
     @action(detail=True, methods=['post'])
     def valider(self, request, pk=None):
         """Valider une demande → statut EN_COURS"""
