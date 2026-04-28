@@ -83,14 +83,13 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
         """Calcule le solde total de la caisse."""
         entrees = EntreeCaisse.objects.filter(type_mouvement='entree').aggregate(t=Sum('montant'))['t'] or 0
         sorties = EntreeCaisse.objects.filter(type_mouvement='sortie').aggregate(t=Sum('montant'))['t'] or 0
-        today = timezone.localdate()
-        entrees_jour = EntreeCaisse.objects.filter(type_mouvement='entree', date=today).aggregate(t=Sum('montant'))['t'] or 0
-        sorties_jour = EntreeCaisse.objects.filter(type_mouvement='sortie', date=today).aggregate(t=Sum('montant'))['t'] or 0
+        alimentations = EntreeCaisse.objects.filter(type_mouvement='alimentation').aggregate(t=Sum('montant'))['t'] or 0
+        
         return Response({
             'total_entrees': entrees,
             'total_sorties': sorties,
-            'solde': entrees - sorties,
-            'solde_jour': entrees_jour - sorties_jour,
+            'solde': entrees - sorties + alimentations,
+            'solde_jour': entrees - sorties - alimentations,
             'operations_count': EntreeCaisse.objects.count()
         })
 

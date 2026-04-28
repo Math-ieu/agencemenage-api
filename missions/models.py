@@ -28,10 +28,18 @@ class Mission(models.Model):
     PAIEMENT_NON_PAYE = 'non_paye'
     PAIEMENT_EN_ATTENTE = 'en_attente'
     PAIEMENT_EFFECTUE = 'effectue'
+    PAIEMENT_PARTIEL = 'partiel'
+    PAIEMENT_AGENCE_PAYEE = 'agence_payee_client'
+    PAIEMENT_PROFIL_PAYE = 'profil_paye_client'
+    PAIEMENT_ANNULE = 'facturation_annulee'
     PAIEMENT_STATUT_CHOICES = [
         (PAIEMENT_NON_PAYE, 'Non payé'),
         (PAIEMENT_EN_ATTENTE, 'Paiement en attente'),
         (PAIEMENT_EFFECTUE, 'Paiement effectué'),
+        (PAIEMENT_PARTIEL, 'Paiement partiel'),
+        (PAIEMENT_AGENCE_PAYEE, 'Agence payée / Client'),
+        (PAIEMENT_PROFIL_PAYE, 'Profil payé / Client'),
+        (PAIEMENT_ANNULE, 'Facturation annulée'),
     ]
 
     MODE_VIREMENT = 'virement'
@@ -47,6 +55,8 @@ class Mission(models.Model):
 
     demande = models.ForeignKey(Demande, on_delete=models.CASCADE, related_name='missions')
     agent = models.ForeignKey(Agent, on_delete=models.PROTECT, related_name='missions')
+    intervenants = models.ManyToManyField(Agent, related_name='missions_incluses', blank=True)
+    delegue = models.ForeignKey(Agent, on_delete=models.SET_NULL, null=True, blank=True, related_name='missions_deleguees')
     statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default=EN_ATTENTE)
     date_debut = models.DateTimeField(null=True, blank=True)
     date_fin = models.DateTimeField(null=True, blank=True)
@@ -65,6 +75,13 @@ class Mission(models.Model):
     date_versement_profil = models.DateField(null=True, blank=True)
     part_agence_reversee = models.BooleanField(default=False)
     date_remise_agence = models.DateField(null=True, blank=True)
+
+    # Complex Billing workflows
+    annulation_raison = models.TextField(blank=True)
+    profil_sera_paye = models.BooleanField(default=False)
+    montant_profil_annulation = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    montant_agence_doit_profil = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    montant_profil_doit_agence = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,

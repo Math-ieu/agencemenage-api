@@ -99,6 +99,9 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                 client.opt_out_feedback = True
                 client.save()
         
+        # Update client and agent fields based on feedback
+        self._update_profiles_and_client(feedback)
+        
         # Determine agent ID for logging if mission exists
         agent_id = None
         if feedback.mission and feedback.mission.agent:
@@ -109,6 +112,41 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             if last_agent:
                 agent_id = last_agent.pk
 
+        self._log_action_received(feedback, agent_id)
+
+    def _update_profiles_and_client(self, feedback):
+        """Update client and agent info with feedback data."""
+        client = feedback.client
+        if not client and feedback.demande:
+            client = feedback.demande.client
+        
+        if client:
+            # Update client Feedback section (notes or avis)
+            if feedback.commentaire:
+                new_avis = f"[{feedback.date.strftime('%d/%m/%Y')}] {feedback.commentaire}"
+                if client.avis_operationnel:
+                    client.avis_operationnel = f"{client.avis_operationnel}\n{new_avis}"
+                else:
+                    client.avis_operationnel = new_avis
+                client.save(update_fields=['avis_operationnel'])
+
+        # Update Agent/Profil Evaluation
+        agent = None
+        if feedback.mission and feedback.mission.agent:
+            agent = feedback.mission.agent
+        elif feedback.demande:
+            agent = feedback.demande.profils_envoyes.last()
+        
+        if agent and feedback.note_intervenant:
+            # Update Agent operator_notes or evaluate (if specific field existed, but we use notes)
+            new_eval = f"[{feedback.date.strftime('%d/%m/%Y')}] Évaluation: {feedback.note_intervenant}/5. {feedback.commentaire}"
+            if agent.operator_notes:
+                agent.operator_notes = f"{agent.operator_notes}\n{new_eval}"
+            else:
+                agent.operator_notes = new_eval
+            agent.save(update_fields=['operator_notes'])
+
+    def _log_action_received(self, feedback, agent_id):
         # Log action
         client_name = 'Client'
         if feedback.client:

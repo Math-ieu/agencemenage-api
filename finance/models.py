@@ -83,9 +83,11 @@ class EntreeCaisse(models.Model):
     """Entrée de caisse journalière."""
     ENTREE = 'entree'
     SORTIE = 'sortie'
+    ALIMENTATION = 'alimentation'
     TYPE_CHOICES = [
         (ENTREE, 'Entrée'),
         (SORTIE, 'Sortie'),
+        (ALIMENTATION, 'Alimentation de la caisse'),
     ]
 
     VIREMENT = 'virement'
@@ -99,7 +101,7 @@ class EntreeCaisse(models.Model):
         (PAIEMENT_AGENCE, 'Paiement agence'),
     ]
 
-    type_mouvement = models.CharField(max_length=10, choices=TYPE_CHOICES)
+    type_mouvement = models.CharField(max_length=15, choices=TYPE_CHOICES)
     montant = models.DecimalField(max_digits=10, decimal_places=2)
     description = models.CharField(max_length=300)
     date = models.DateField()

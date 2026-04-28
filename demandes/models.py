@@ -61,11 +61,13 @@ class Demande(models.Model):
     ACOMPTE = 'acompte'
     PARTIEL = 'partiel'
     INTEGRAL = 'integral'
+    EN_ATTENTE = 'en_attente'
     PAIEMENT_STATUT_CHOICES = [
         (NON_PAYE, 'Non payé'),
         (ACOMPTE, 'Acompte versé'),
         (PARTIEL, 'Paiement partiel'),
         (INTEGRAL, 'Payé'),
+        (EN_ATTENTE, 'Paiement en attente'),
     ]
 
     # Core fields
