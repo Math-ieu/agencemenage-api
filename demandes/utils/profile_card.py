@@ -23,13 +23,20 @@ GOLD            = (212, 175, 55)      # doré (formes décoratives)
 TEXT_DARK       = (40, 40, 40)        # quasi-noir pour le texte
 
 # Tentative de localisation des polices (Linux standard)
-FONT_PATHS = [
-    "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
-    "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
-    "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf"
-]
+BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 def _get_font(bold=True, size=28):
+    font_name = 'Roboto-Bold.ttf' if bold else 'Roboto-Regular.ttf'
+    custom_font_path = os.path.join(BASE_DIR, 'assets', 'fonts', font_name)
+    
+    if os.path.exists(custom_font_path):
+        return ImageFont.truetype(custom_font_path, size)
+        
+    FONT_PATHS = [
+        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+    ]
     for path in FONT_PATHS:
         if os.path.exists(path):
             return ImageFont.truetype(path, size)

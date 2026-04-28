@@ -180,9 +180,15 @@ def generate_recap_png(data: dict) -> bytes:
     img  = Image.new("RGB", (W, H), WHITE_PIL)
     draw = ImageDraw.Draw(img)
  
-    # ── font helpers (fallback to default PIL fonts) ──────────────────────────
     def font(size, bold=False):
         try:
+            BASE_DIR = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            font_name = 'Roboto-Bold.ttf' if bold else 'Roboto-Regular.ttf'
+            custom_font_path = os.path.join(BASE_DIR, 'assets', 'fonts', font_name)
+            
+            if os.path.exists(custom_font_path):
+                return ImageFont.truetype(custom_font_path, size)
+                
             # Check common paths for Linux
             paths = [
                 "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
