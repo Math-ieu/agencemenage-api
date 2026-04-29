@@ -224,10 +224,10 @@ class DemandeViewSet(viewsets.ModelViewSet):
     def generate_document(self, request, pk=None):
         """Génère un document (PDF ou PNG) pour cette demande."""
         demande = self.get_object()
-        doc_type = request.data.get('type')  # 'devis' or 'png'
+        doc_type = request.data.get('type')  # 'devis', 'png' or 'facture'
         
-        if doc_type not in ['devis', 'png']:
-            return Response({'error': 'Type de document invalide (devis ou png requis)'}, status=400)
+        if doc_type not in ['devis', 'png', 'facture']:
+            return Response({'error': 'Type de document invalide (devis, png ou facture requis)'}, status=400)
             
         client = demande.client
         client_nom = client.display_name if client else "Client"
@@ -283,8 +283,8 @@ class DemandeViewSet(viewsets.ModelViewSet):
         # Feature flag "Bypass" : Ne pas envoyer réellement les nouveaux templates s'ils sont instables ou non validés
         BYPASS_NEW_TEMPLATES = getattr(settings, 'BYPASS_NEW_WA_TEMPLATES', False)
 
-        # Pour les types utilisant un document (devis, png)
-        if doc_type in ['devis', 'png']:
+        # Pour les types utilisant un document (devis, png, facture)
+        if doc_type in ['devis', 'png', 'facture']:
             doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
 
             if not doc:
@@ -302,7 +302,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
             logger = logging.getLogger(__name__)
             logger.info(f"WhatsApp Media URL generated: {media_url} for type {doc_type}")
             
-            wa_media_type = 'document' if doc_type == 'devis' else 'image'
+            wa_media_type = 'document' if doc_type in ['devis', 'facture'] else 'image'
 
         # Définition des templates et variables
         template = None
@@ -320,6 +320,20 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 demande.date_intervention.strftime('%d/%m/%Y') if demande.date_intervention else "Non définie",
                 demande.heure_intervention or "—",
                 f"{demande.prix}"
+            ]
+            
+        elif doc_type == 'facture':
+            template = 'facture_client'
+            # Format price with thousands separator
+            formatted_total = f"{demande.prix:,.2f}".replace(",", " ") if demande.prix else "0.00"
+            invoice_num = f"AM/F{demande.id:03d}/{datetime.datetime.now().year}"
+            
+            vars = [
+                client_name,
+                invoice_num,
+                datetime.date.today().strftime('%d/%m/%Y'),
+                demande.service,
+                formatted_total
             ]
             
         elif doc_type == 'cao_profil':

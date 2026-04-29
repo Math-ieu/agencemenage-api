@@ -2,6 +2,7 @@ import datetime
 from django.core.files.base import ContentFile
 from ..models import Document
 from .document_generators import generate_devis_pdf, generate_recap_png
+from .invoice_generator import generate_invoice, InvoiceData, InvoiceItem
 
 # Human-readable labels for all frequency codes sent from the frontend
 FREQUENCY_LABELS = {
@@ -64,6 +65,30 @@ def generate_demande_document(demande, doc_type, user=None):
         content_bytes = generate_devis_pdf(data)
         filename = f"DEVIS_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
         db_content_type = Document.DEVIS
+    elif doc_type == 'facture':
+        # Prepare Invoice items
+        items = [
+            InvoiceItem(demande.service, float(demande.prix or 0))
+        ]
+        
+        # Calculate invoice number
+        invoice_number = f"AM/F{demande.pk:03d}/{datetime.datetime.now().year}"
+        
+        invoice_data = InvoiceData(
+            invoice_number=invoice_number,
+            invoice_date=datetime.date.today(),
+            client_name=client_nom,
+            client_ice=form_data.get('ice', ''),
+            client_address=client_adresse,
+            service_type=demande.service,
+            frequency=resolve_frequency_label(demande),
+            items=items,
+            tva_rate=0.20 if form_data.get('tva_active') else 0.00
+        )
+        
+        content_bytes = generate_invoice(invoice_data).read()
+        filename = f"FACTURE_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
+        db_content_type = Document.FACTURE
     else:
         content_bytes = generate_recap_png(data)
         filename = f"RECAP_{client_nom.replace(' ', '_')}_{demande.pk}.png"
