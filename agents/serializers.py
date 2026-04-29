@@ -14,6 +14,7 @@ class AgentExperienceSerializer(serializers.ModelSerializer):
 
 class AgentSerializer(serializers.ModelSerializer):
     experiences = AgentExperienceSerializer(many=True, required=False)
+    average_rating = serializers.ReadOnlyField()
 
     class Meta:
         model = Agent
@@ -72,10 +73,11 @@ class AgentSerializer(serializers.ModelSerializer):
 
 
 class AgentListSerializer(serializers.ModelSerializer):
+    average_rating = serializers.ReadOnlyField()
     class Meta:
         model = Agent
         fields = [
             'id', 'uuid', 'first_name', 'last_name', 'full_name', 'phone', 'whatsapp',
             'poste', 'statut', 'city', 'neighborhood', 'experience', 
-            'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at'
+            'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating'
         ]

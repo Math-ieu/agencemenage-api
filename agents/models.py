@@ -86,6 +86,19 @@ class Agent(models.Model):
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
 
+    @property
+    def average_rating(self):
+        # We check both direct mission feedback and demande feedback where this agent was the last sent
+        from feedback.models import Feedback
+        from django.db.models import Avg, Q
+        
+        avg = Feedback.objects.filter(
+            Q(mission__agent=self) | 
+            Q(demande__profils_envoyes=self)
+        ).aggregate(avg_note=Avg('note_intervenant'))['avg_note']
+        
+        return round(avg, 1) if avg else None
+
 
 class AgentExperience(models.Model):
     agent = models.ForeignKey(Agent, related_name='experiences', on_delete=models.CASCADE)
