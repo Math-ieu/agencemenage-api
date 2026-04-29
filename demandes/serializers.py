@@ -92,15 +92,7 @@ class DemandeSerializer(serializers.ModelSerializer):
                 defaults['address'] = form_data.get('adresse')
 
             if client_phone:
-                client, created = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
-                # Si le client existait déjà mais n'avait pas de nom, on le met à jour
-                if not created and client_name:
-                    if client.segment == Client.ENTREPRISE and not client.entity_name:
-                        client.entity_name = client_name
-                        client.save()
-                    elif client.segment == Client.PARTICULIER and not client.last_name:
-                        client.last_name = client_name
-                        client.save()
+                client = Client.objects.create(phone=client_phone, **defaults)
             else:
                 client = Client.objects.create(**defaults)
         
@@ -415,19 +407,11 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
 
         phone = client_data.pop('phone')
 
-        # Find or create client by phone, then update fields if they exist
-        client, created = Client.objects.get_or_create(
+        # Create a new client every time, phone is NOT a unique identifier
+        client = Client.objects.create(
             phone=phone,
-            defaults={'phone': phone, **client_data}
+            **client_data
         )
-
-        # If client already existed, update non-empty fields
-        if not created:
-            for field, value in client_data.items():
-                if value:  # Only update with non-empty values
-                    setattr(client, field, value)
-            client.phone = phone
-            client.save()
 
         # Automate segmentation
         service = validated_data.get('service')
