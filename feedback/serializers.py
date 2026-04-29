@@ -49,10 +49,22 @@ class FeedbackSerializer(serializers.ModelSerializer):
         return obj.demande.segment if obj.demande else "particulier"
 
     def get_city(self, obj):
-        return obj.demande.neighborhood_city.split(',')[-1].strip() if obj.demande and obj.demande.neighborhood_city else "—"
+        if obj.client and obj.client.city:
+            return obj.client.city
+        if obj.demande:
+            if obj.demande.client and obj.demande.client.city:
+                return obj.demande.client.city
+            return obj.demande.formulaire_data.get('ville', '—')
+        return "—"
 
     def get_neighborhood(self, obj):
-        return obj.demande.neighborhood_city.split(',')[0].strip() if obj.demande and obj.demande.neighborhood_city else "—"
+        if obj.client and obj.client.neighborhood:
+            return obj.client.neighborhood
+        if obj.demande:
+            if obj.demande.client and obj.demande.client.neighborhood:
+                return obj.demande.client.neighborhood
+            return obj.demande.formulaire_data.get('quartier', '—')
+        return "—"
 
     def get_date_prestation(self, obj):
         if obj.demande:
