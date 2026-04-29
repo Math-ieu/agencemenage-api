@@ -291,6 +291,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'frequency_label', 'date_intervention', 'heure_intervention',
             'prix', 'is_devis', 'mode_paiement', 'statut_paiement', 
             'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
+            'part_agence', 'parts_repartition',
             'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
@@ -373,13 +374,13 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     def get_statut_paiement_label(self, obj):
         ui_value = self.get_statut_paiement_ui(obj)
         ui_map = {
-            'non_confirme': 'Non confirme',
+            'non_confirme': 'Non confirmé',
             'paiement_en_attente': 'Paiement en attente',
-            'agence_payee_client': 'Agence payee / Client',
-            'profil_paye_client': 'profil_paye_client',
-            'paye': 'Paye',
+            'agence_payee_client': 'Agence payé / Client',
+            'profil_paye_client': 'Profil payé / Client',
+            'paye': 'Payé',
             'paiement_partiel': 'Paiement partiel',
-            'facturation_annulee': 'Facturation annulee',
+            'facturation_annulee': 'Facturation annulée',
         }
         if ui_value in ui_map:
             return ui_map[ui_value]

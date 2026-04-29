@@ -128,6 +128,10 @@ class Demande(models.Model):
 
     # Confirmation avant opération
     cao = models.BooleanField(default=False, verbose_name="Confirmation avant opération")
+    
+    # Gestion des parts
+    part_agence = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Part agence")
+    parts_repartition = models.JSONField(default=list, blank=True, verbose_name="Répartition des parts")
 
     # Profils envoyés pour cette demande
     profils_envoyes = models.ManyToManyField(

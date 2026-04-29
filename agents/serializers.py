@@ -20,39 +20,50 @@ class AgentSerializer(serializers.ModelSerializer):
         model = Agent
         fields = '__all__'
 
-    def create(self, validated_data):
-        request = self.context.get('request')
-        if not request:
-            return super().create(validated_data)
-            
-        # Handle JSON strings from FormData
-        experiences_json = request.data.get('experiences_json')
-        languages_json = request.data.get('languages')
+    def _cleanup_form_data(self, request, validated_data):
+        import json
+        from django.db import models
         
+        # 1. Handle JSON strings from FormData (languages)
+        languages_json = request.data.get('languages')
         if languages_json and isinstance(languages_json, str):
-            import json
             try:
                 validated_data['languages'] = json.loads(languages_json)
             except json.JSONDecodeError:
                 pass
             
-        # Handle Boolean strings from FormData
+        # 2. Handle Boolean strings from FormData ("true"/"false")
         for field in Agent._meta.get_fields():
             if isinstance(field, models.BooleanField):
                 val = request.data.get(field.name)
                 if val is not None and isinstance(val, str):
                     validated_data[field.name] = val.lower() == 'true'
 
+        # 3. Handle empty strings for Date fields and Integer fields
+        for field in Agent._meta.get_fields():
+            if isinstance(field, (models.DateField, models.IntegerField, models.PositiveIntegerField)):
+                val = validated_data.get(field.name)
+                if val == '':
+                    validated_data[field.name] = None
+
+        # 4. Handle experiences_json
+        experiences_json = request.data.get('experiences_json')
         experiences_data = validated_data.pop('experiences', [])
+        
         if not experiences_data and experiences_json:
-            import json
             try:
                 experiences_data = json.loads(experiences_json)
             except json.JSONDecodeError:
                 pass
+        
+        return experiences_data
+
+    def create(self, validated_data):
+        request = self.context.get('request')
+        experiences_data = []
+        if request:
+            experiences_data = self._cleanup_form_data(request, validated_data)
             
-        # Files are automatically in request.FILES and should be in validated_data 
-        # because the views use the default parsers (MultiPartParser).
         agent = Agent.objects.create(**validated_data)
         
         for exp_data in experiences_data:
@@ -61,7 +72,15 @@ class AgentSerializer(serializers.ModelSerializer):
         return agent
 
     def update(self, instance, validated_data):
-        experiences_data = validated_data.pop('experiences', None)
+        request = self.context.get('request')
+        experiences_data = None
+        if request:
+            experiences_data = self._cleanup_form_data(request, validated_data)
+        
+        # If 'experiences' was NOT in the payload (None), we don't touch them.
+        # But if it was passed (even empty list), we sync them.
+        # Note: _cleanup_form_data pops 'experiences' from validated_data.
+        
         instance = super().update(instance, validated_data)
         
         if experiences_data is not None:
