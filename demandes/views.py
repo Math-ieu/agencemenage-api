@@ -221,6 +221,60 @@ class DemandeViewSet(viewsets.ModelViewSet):
         return Response({'cao': True})
 
     @action(detail=True, methods=['post'])
+    def confirmer_client(self, request, pk=None):
+        """Confirme que le client suspect est bien le même que potential_duplicate_client."""
+        demande = self.get_object()
+        if not demande.potential_duplicate_client:
+            return Response({'error': 'Aucun doublon potentiel détecté.'}, status=400)
+        
+        old_client = demande.client
+        target_client = demande.potential_duplicate_client
+        
+        # Link demand to existing client
+        demande.client = target_client
+        demande.identification_statut = Demande.ID_EXISTANT
+        demande.potential_duplicate_client = None
+        demande.save()
+        
+        # Delete temporary client if no other demands
+        if old_client and old_client != target_client:
+            if old_client.demandes.count() == 0:
+                old_client.delete()
+        
+        self._log_action(request.user, 'confirmer_client_existant', demande, extra_data={'client_id': target_client.id})
+        return Response(DemandeSerializer(demande).data)
+
+    @action(detail=True, methods=['post'])
+    def nouveau_client(self, request, pk=None):
+        """Confirme qu'il s'agit d'un nouveau client (numéro réattribué)."""
+        demande = self.get_object()
+        if not demande.potential_duplicate_client:
+            return Response({'error': 'Aucun doublon potentiel détecté.'}, status=400)
+        
+        old_client = demande.potential_duplicate_client
+        current_client = demande.client
+        
+        # Dissociate phone from old client
+        if old_client.phone == current_client.phone:
+            if not old_client.phone_history:
+                old_client.phone_history = []
+            old_client.phone_history.append({
+                'phone': old_client.phone,
+                'date_end': datetime.datetime.now().isoformat(),
+                'status': 'inactive'
+            })
+            # Clear or prefix old phone
+            old_client.phone = f"OLD_{old_client.id}_{old_client.phone}"
+            old_client.save()
+            
+        demande.identification_statut = Demande.ID_NOUVELLE
+        demande.potential_duplicate_client = None
+        demande.save()
+        
+        self._log_action(request.user, 'confirmer_nouveau_client_reattribue', demande)
+        return Response(DemandeSerializer(demande).data)
+
+    @action(detail=True, methods=['post'])
     def generate_document(self, request, pk=None):
         """Génère un document (PDF ou PNG) pour cette demande."""
         demande = self.get_object()

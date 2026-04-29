@@ -37,6 +37,7 @@ class DemandeSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_detail = ClientListSerializer(source='client', read_only=True)
+    potential_duplicate_detail = ClientListSerializer(source='potential_duplicate_client', read_only=True)
     assigned_to_detail = UserSerializer(source='assigned_to', read_only=True)
     nrp_count = serializers.SerializerMethodField()
     nrp_logs = NRPLogSerializer(many=True, read_only=True)
@@ -63,16 +64,21 @@ class DemandeSerializer(serializers.ModelSerializer):
         return obj.nrp_logs.count()
 
     def create(self, validated_data):
-        client_name = validated_data.pop('client_name', '')
-        client_phone = validated_data.pop('client_phone', '')
+        client_name = validated_data.pop('client_name', '').strip()
+        client_phone = validated_data.pop('client_phone', '').strip()
+        
+        # Identification Logic
+        id_statut = Demande.ID_NOUVELLE
+        potential_duplicate = None
+        client = None
         
         # Pop non-model fields
         regenerer_devis = validated_data.pop('regenerer_devis', False)
         envoyer_whatsapp = validated_data.pop('envoyer_whatsapp', False)
-        
-        client = None
+
         if client_phone or client_name:
             from clients.models import Client
+            
             defaults = {
                 'last_name': client_name if validated_data.get('segment') == Client.PARTICULIER else '',
                 'entity_name': client_name if validated_data.get('segment') == Client.ENTREPRISE else '',
@@ -92,13 +98,45 @@ class DemandeSerializer(serializers.ModelSerializer):
                 defaults['address'] = form_data.get('adresse')
 
             if client_phone:
-                client = Client.objects.create(phone=client_phone, **defaults)
+                # 1. Search for existing client by phone
+                existing_client = Client.objects.filter(phone=client_phone, is_archived=False).order_by('-created_at').first()
+                
+                if existing_client:
+                    # 2. Check for name consistency
+                    existing_name = existing_client.display_name.lower()
+                    provided_name = client_name.lower()
+                    
+                    # Fuzzy match: name contains or is contained in existing name
+                    # We also handle case where provided name is empty (site web might send empty if only phone provided)
+                    if not provided_name or provided_name in existing_name or existing_name in provided_name:
+                        # Confirmed match
+                        client = existing_client
+                        id_statut = Demande.ID_EXISTANT
+                        
+                        # Automatic Ownership / Assignment
+                        if existing_client.assigned_commercial:
+                            validated_data['assigned_to'] = existing_client.assigned_commercial
+                    else:
+                        # Potential duplicate / Reassigned number
+                        id_statut = Demande.ID_VERIF_REQUISE
+                        potential_duplicate = existing_client
+                        
+                        # We create a new "suspect" client record to store the provided info
+                        client = Client.objects.create(phone=client_phone, **defaults)
+                else:
+                    # Truly new client
+                    client = Client.objects.create(phone=client_phone, **defaults)
             else:
+                # No phone, just create by name
                 client = Client.objects.create(**defaults)
         
         if client:
             validated_data['client'] = client
             
+        # Set identification fields
+        validated_data['identification_statut'] = id_statut
+        validated_data['potential_duplicate_client'] = potential_duplicate
+
         # Automate segmentation
         service = validated_data.get('service')
         segment_provided = 'segment' in self.initial_data
@@ -110,6 +148,9 @@ class DemandeSerializer(serializers.ModelSerializer):
         # Always sync client segment with the demand's segment
         if client and 'segment' in validated_data:
             client.segment = validated_data['segment']
+            # If no commercial assigned to client yet, assign the one from the demand
+            if not client.assigned_commercial and validated_data.get('assigned_to'):
+                client.assigned_commercial = validated_data['assigned_to']
             client.save()
             
         # Sync preference_horaire from formulaire_data if present
@@ -405,13 +446,38 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
             'segment': validated_data.get('segment', Client.PARTICULIER),
         }
 
-        phone = client_data.pop('phone')
+        phone = client_data.pop('phone').strip()
+        client_name = (client_data['entity_name'] or f"{client_data['first_name']} {client_data['last_name']}").strip()
 
-        # Create a new client every time, phone is NOT a unique identifier
-        client = Client.objects.create(
-            phone=phone,
-            **client_data
-        )
+        # Identification Logic
+        id_statut = Demande.ID_NOUVELLE
+        potential_duplicate = None
+        client = None
+
+        # 1. Search for existing client by phone
+        existing_client = Client.objects.filter(phone=phone, is_archived=False).order_by('-created_at').first()
+
+        if existing_client:
+            # 2. Check for name consistency
+            existing_name = existing_client.display_name.lower()
+            provided_name = client_name.lower()
+            
+            if not provided_name or provided_name in existing_name or existing_name in provided_name:
+                # Confirmed match
+                client = existing_client
+                id_statut = Demande.ID_EXISTANT
+                
+                # Auto-assign to existing commercial
+                if existing_client.assigned_commercial:
+                    validated_data['assigned_to'] = existing_client.assigned_commercial
+            else:
+                # Potential duplicate
+                id_statut = Demande.ID_VERIF_REQUISE
+                potential_duplicate = existing_client
+                client = Client.objects.create(phone=phone, **client_data)
+        else:
+            # New client
+            client = Client.objects.create(phone=phone, **client_data)
 
         # Automate segmentation
         service = validated_data.get('service')
@@ -421,15 +487,20 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
             segment = get_segment_from_service(service)
             validated_data['segment'] = segment
 
-        # Sync client segment
-        if 'segment' in validated_data:
-            client.segment = validated_data['segment']
+        # Sync client segment & Ownership
+        if client:
+            if 'segment' in validated_data:
+                client.segment = validated_data['segment']
+            if not client.assigned_commercial and validated_data.get('assigned_to'):
+                client.assigned_commercial = validated_data['assigned_to']
             client.save()
 
         demande = Demande.objects.create(
             client=client,
             source=Demande.SITE,
             statut=Demande.EN_ATTENTE,
+            identification_statut=id_statut,
+            potential_duplicate_client=potential_duplicate,
             **validated_data
         )
         return demande

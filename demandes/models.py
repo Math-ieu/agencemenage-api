@@ -100,6 +100,29 @@ class Demande(models.Model):
         verbose_name="Commercial assigné"
     )
 
+    # Identification & Matching Logic
+    ID_NOUVELLE = 'nouvelle'
+    ID_EXISTANT = 'existant_valide'
+    ID_VERIF_REQUISE = 'verification_requise'
+    ID_STATUT_CHOICES = [
+        (ID_NOUVELLE, 'Nouvelle'),
+        (ID_EXISTANT, 'Client existe déjà'),
+        (ID_VERIF_REQUISE, 'Vérification requise'),
+    ]
+    identification_statut = models.CharField(
+        max_length=30, 
+        choices=ID_STATUT_CHOICES, 
+        default=ID_NOUVELLE,
+        verbose_name="Statut d'identification"
+    )
+    potential_duplicate_client = models.ForeignKey(
+        Client, 
+        on_delete=models.SET_NULL, 
+        null=True, blank=True, 
+        related_name='demandes_suspectes',
+        verbose_name="Client potentiel (doublon)"
+    )
+
     # Raw form data from website (JSON)
     formulaire_data = models.JSONField(default=dict, blank=True)
 

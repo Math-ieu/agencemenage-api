@@ -1,4 +1,5 @@
 from django.db import models
+from django.conf import settings
 
 
 class Client(models.Model):
@@ -34,6 +35,15 @@ class Client(models.Model):
     avis_operationnel = models.TextField(blank=True, verbose_name="Avis opérationnel")
     is_archived = models.BooleanField(default=False, db_index=True)
     opt_out_feedback = models.BooleanField(default=False, verbose_name="Désinscription Feedback")
+    
+    assigned_commercial = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='clients_geres',
+        verbose_name="Commercial assigné (Owner)"
+    )
+    phone_history = models.JSONField(default=list, blank=True, verbose_name="Historique des numéros")
 
     class Meta:
         verbose_name = 'Client'

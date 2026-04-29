@@ -11,6 +11,11 @@ from rest_framework.response import Response
 class FeedbackViewSet(viewsets.ModelViewSet):
     queryset = Feedback.objects.select_related('mission', 'client', 'demande').all()
     serializer_class = FeedbackSerializer
+
+    def get_permissions(self):
+        if self.action == 'create':
+            return [permissions.AllowAny()]
+        return [permissions.IsAuthenticated()]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['client', 'note_agence', 'note_intervenant']
     search_fields = [
