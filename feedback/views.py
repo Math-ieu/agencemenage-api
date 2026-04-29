@@ -20,7 +20,10 @@ class FeedbackViewSet(viewsets.ModelViewSet):
     filterset_fields = ['client', 'note_agence', 'note_intervenant']
     search_fields = [
         'commentaire', 
-        'demande__client_name', 
+        'demande__client__first_name',
+        'demande__client__last_name',
+        'client__first_name',
+        'client__last_name',
         'demande__formulaire_data',
         'demande__service'
     ]
@@ -135,21 +138,8 @@ class FeedbackViewSet(viewsets.ModelViewSet):
                     client.avis_operationnel = new_avis
                 client.save(update_fields=['avis_operationnel'])
 
-        # Update Agent/Profil Evaluation
-        agent = None
-        if feedback.mission and feedback.mission.agent:
-            agent = feedback.mission.agent
-        elif feedback.demande:
-            agent = feedback.demande.profils_envoyes.last()
-        
-        if agent and feedback.note_intervenant:
-            # Update Agent operator_notes or evaluate (if specific field existed, but we use notes)
-            new_eval = f"[{feedback.date.strftime('%d/%m/%Y')}] Évaluation: {feedback.note_intervenant}/5. {feedback.commentaire}"
-            if agent.operator_notes:
-                agent.operator_notes = f"{agent.operator_notes}\n{new_eval}"
-            else:
-                agent.operator_notes = new_eval
-            agent.save(update_fields=['operator_notes'])
+        # We no longer append feedback to agent.operator_notes 
+        # to prevent it from displaying on the public profile page.
 
     def _log_action_received(self, feedback, agent_id):
         # Log action
@@ -157,7 +147,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         if feedback.client:
             client_name = feedback.client.display_name
         elif feedback.demande:
-            client_name = feedback.demande.client_name or 'Client'
+            client_name = feedback.demande.client.display_name if feedback.demande.client else feedback.demande.formulaire_data.get('nom', 'Client')
 
         AuditLog.objects.create(
             user=self.request.user if self.request.user.is_authenticated else None,

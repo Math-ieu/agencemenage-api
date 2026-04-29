@@ -26,7 +26,7 @@ class FeedbackSerializer(serializers.ModelSerializer):
         if obj.client:
             return obj.client.display_name
         if obj.demande:
-            return obj.demande.client_name or obj.demande.formulaire_data.get('nom', 'Client')
+            return obj.demande.client.display_name if obj.demande.client else obj.demande.formulaire_data.get('nom', 'Client')
         return "Client"
 
     def _get_agent(self, obj):
