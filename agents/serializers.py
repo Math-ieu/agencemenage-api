@@ -1,6 +1,7 @@
 from django.db import models
 from rest_framework import serializers
 from .models import Agent, AgentExperience
+from demandes.models import Demande
 
 
 class AgentExperienceSerializer(serializers.ModelSerializer):
@@ -15,10 +16,19 @@ class AgentExperienceSerializer(serializers.ModelSerializer):
 class AgentSerializer(serializers.ModelSerializer):
     experiences = AgentExperienceSerializer(many=True, required=False)
     average_rating = serializers.ReadOnlyField()
+    is_assigned_active = serializers.SerializerMethodField()
 
     class Meta:
         model = Agent
         fields = '__all__'
+
+    def get_is_assigned_active(self, obj):
+        """True si l'agent est affecté (via profils_envoyes) à une demande active."""
+        active_statuts = [Demande.EN_ATTENTE, Demande.ENCOURS, Demande.PRES_EN_COURS]
+        return Demande.objects.filter(
+            profils_envoyes=obj,
+            statut__in=active_statuts
+        ).exists()
 
     def _cleanup_form_data(self, request, validated_data):
         import json
