@@ -283,6 +283,15 @@ class DemandeListSerializer(serializers.ModelSerializer):
     profil_share_links = serializers.SerializerMethodField()
     documents = DocumentSerializer(many=True, read_only=True)
     profils_envoyes = AgentListSerializer(many=True, read_only=True)
+    statut_paiement_ui = serializers.SerializerMethodField()
+    montant_ht = serializers.SerializerMethodField()
+    montant_ttc = serializers.SerializerMethodField()
+    montant_verse = serializers.SerializerMethodField()
+    montant_agence_doit_profil = serializers.SerializerMethodField()
+    montant_profil_doit_agence = serializers.SerializerMethodField()
+    annulation_raison = serializers.SerializerMethodField()
+    profil_sera_paye = serializers.SerializerMethodField()
+    montant_profil_annulation = serializers.SerializerMethodField()
 
     class Meta:
         model = Demande
@@ -292,11 +301,44 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'prix', 'is_devis', 'mode_paiement', 'statut_paiement', 
             'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
             'part_agence', 'parts_repartition',
+            'statut_paiement_ui', 'montant_ht', 'montant_ttc', 'montant_verse',
+            'montant_agence_doit_profil', 'montant_profil_doit_agence',
+            'annulation_raison', 'profil_sera_paye', 'montant_profil_annulation',
             'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
             'assigned_to_name', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes'
         ]
+
+    def _get_facturation_field(self, obj, field, default=None):
+        return (obj.formulaire_data or {}).get('facturation', {}).get(field, default)
+
+    def get_statut_paiement_ui(self, obj):
+        return self._get_facturation_field(obj, 'statut_paiement_ui')
+
+    def get_montant_ht(self, obj):
+        return self._get_facturation_field(obj, 'montant_ht', 0)
+
+    def get_montant_ttc(self, obj):
+        return self._get_facturation_field(obj, 'montant_ttc', obj.prix)
+
+    def get_montant_verse(self, obj):
+        return self._get_facturation_field(obj, 'montant_verse', 0)
+
+    def get_montant_agence_doit_profil(self, obj):
+        return self._get_facturation_field(obj, 'montant_agence_doit_profil', 0)
+
+    def get_montant_profil_doit_agence(self, obj):
+        return self._get_facturation_field(obj, 'montant_profil_doit_agence', 0)
+
+    def get_annulation_raison(self, obj):
+        return self._get_facturation_field(obj, 'annulation_raison', '')
+
+    def get_profil_sera_paye(self, obj):
+        return self._get_facturation_field(obj, 'profil_sera_paye', False)
+
+    def get_montant_profil_annulation(self, obj):
+        return self._get_facturation_field(obj, 'montant_profil_annulation', 0)
 
     def get_nrp_count(self, obj):
         return obj.nrp_logs.count()
@@ -350,6 +392,12 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'profil_name',
             'profil_id',
             'motif',
+            'formulaire_data',
+            'date_intervention',
+            'prix',
+            'mode_paiement',
+            'part_agence',
+            'parts_repartition',
         ]
 
     def get_profil_name(self, obj):
