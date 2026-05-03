@@ -193,7 +193,9 @@ class DemandeViewSet(viewsets.ModelViewSet):
         demande = self.get_object()
         notes = request.data.get('notes', '')
         NRPLog.objects.create(demande=demande, commercial=request.user, notes=notes)
-        return Response({'nrp_count': demande.nrp_logs.count()})
+        # On utilise une requête directe pour éviter le cache du prefetch_related
+        count = NRPLog.objects.filter(demande=demande).count()
+        return Response({'nrp_count': count})
 
     @action(detail=True, methods=['post'])
     def affecter(self, request, pk=None):
