@@ -33,10 +33,14 @@ class AgentSerializer(serializers.ModelSerializer):
     def to_internal_value(self, data):
         import json
         from django.db import models
+        from rest_framework import serializers
         
-        # Make data mutable if it's a QueryDict
-        mutable_data = data.copy() if hasattr(data, 'copy') else data
-        
+        # Make data mutable
+        if hasattr(data, 'dict'):
+            mutable_data = data.dict()
+        else:
+            mutable_data = data.copy() if hasattr(data, 'copy') else data
+
         # 1. Handle JSON strings from FormData (languages)
         languages_json = mutable_data.get('languages')
         if languages_json and isinstance(languages_json, str):
@@ -45,22 +49,17 @@ class AgentSerializer(serializers.ModelSerializer):
             except json.JSONDecodeError:
                 pass
             
-        # 2. Handle Boolean strings from FormData ("true"/"false")
-        for field in Agent._meta.get_fields():
-            if isinstance(field, models.BooleanField):
-                val = mutable_data.get(field.name)
-                if val is not None and isinstance(val, str):
-                    mutable_data[field.name] = val.lower() == 'true'
-
-        # 3. Handle empty strings for Date fields and Integer fields
-        for field in Agent._meta.get_fields():
-            if isinstance(field, (models.DateField, models.IntegerField, models.PositiveIntegerField)):
-                val = mutable_data.get(field.name)
-                if val == '':
+        # 2. Handle empty/null/undefined strings for Date and Integer fields
+        for field in Agent._meta.fields:
+            if field.name not in mutable_data:
+                continue
+                
+            val = mutable_data.get(field.name)
+            if isinstance(field, (models.DateField, models.IntegerField, models.PositiveIntegerField, models.FileField, models.ImageField)):
+                if val in ('', 'null', 'undefined'):
                     mutable_data[field.name] = None
                     
         return super().to_internal_value(mutable_data)
-
     def _get_experiences_data(self, request):
         import json
         experiences_json = request.data.get('experiences_json')
