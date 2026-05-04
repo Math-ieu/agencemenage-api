@@ -547,6 +547,7 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
         demande = Demande.objects.create(
             client=client,
             source=Demande.SITE,
+            mode_paiement=Demande.VIREMENT,
             statut=Demande.EN_ATTENTE,
             identification_statut=id_statut,
             potential_duplicate_client=potential_duplicate,
