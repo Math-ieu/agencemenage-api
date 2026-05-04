@@ -445,7 +445,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                     'results': results,
                 })
 
-            return Response({'error': "Échec de l'envoi WhatsApp via l'API.", 'results': results}, status=500)
+            return Response({'error': "Échec de l'envoi WhatsApp via l'API (Service tiers indisponible ou bloqué).", 'results': results}, status=502)
             
         elif doc_type == 'feedback':
             template = 'demande_feedback_client_v1'
@@ -472,7 +472,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
             self._log_action(request.user, f'send_wa_{doc_type}', demande)
             return Response({'success': True, 'wa_response': res})
         else:
-            return Response({'error': "Échec de l'envoi WhatsApp via l'API."}, status=500)
+            return Response({'error': "Échec de l'envoi WhatsApp via l'API (Service tiers indisponible ou bloqué)."}, status=502)
 
     @action(detail=True, methods=['post'])
     def envoyer_profil(self, request, pk=None):
