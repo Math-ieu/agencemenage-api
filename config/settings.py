@@ -38,6 +38,7 @@ INSTALLED_APPS = [
     'finance',
     'feedback',
     'blog',
+    'marketing',
 ]
 
 MIDDLEWARE = [

@@ -71,7 +71,7 @@ class Demande(models.Model):
     ]
 
     # Core fields
-    client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name='demandes', null=True, blank=True)
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='demandes', null=True, blank=True)
     service = models.CharField(max_length=200)
     segment = models.CharField(max_length=20, choices=SEGMENT_CHOICES, default=PARTICULIER)
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SITE)

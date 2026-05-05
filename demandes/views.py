@@ -33,6 +33,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
                      'client__entity_name', 'service']
     ordering_fields = ['created_at', 'date_intervention', 'statut']
     ordering = ['-created_at']
+    
+    def get_queryset(self):
+        queryset = super().get_queryset()
+        user = self.request.user
+        if user.is_authenticated and user.role == 'commercial' and not user.is_staff:
+            return queryset.filter(assigned_to=user)
+        return queryset
 
     def get_serializer_class(self):
         if self.action == 'list':

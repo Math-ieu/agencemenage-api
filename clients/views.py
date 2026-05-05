@@ -19,5 +19,6 @@ class ClientViewSet(viewsets.ModelViewSet):
         return ClientSerializer
 
     def perform_destroy(self, instance):
+        instance.demandes.all().delete()
         instance.is_archived = True
         instance.save(update_fields=['is_archived'])
