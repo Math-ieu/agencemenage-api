@@ -6,4 +6,4 @@ class MissionFilter(django_filters.FilterSet):
 
     class Meta:
         model = Mission
-        fields = ['statut', 'agent', 'demande', 'client']
+        fields = ['statut', 'agent', 'delegue', 'intervenants', 'demande', 'client']
