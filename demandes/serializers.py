@@ -307,7 +307,8 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
-            'assigned_to_name', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes'
+            'assigned_to_name', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
+            'note_commercial', 'note_operationnel'
         ]
 
     def _get_facturation_field(self, obj, field, default=None):
