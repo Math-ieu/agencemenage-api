@@ -61,3 +61,14 @@ class Client(models.Model):
         if self.segment == self.ENTREPRISE:
             return self.entity_name or self.contact_person or name_parts or self.phone
         return name_parts or self.entity_name or self.phone
+
+class ClientActionLog(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='action_logs')
+    action = models.CharField(max_length=255)
+    details = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Historique Action Client'
+        verbose_name_plural = 'Historiques Actions Client'

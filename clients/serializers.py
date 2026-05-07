@@ -39,3 +39,10 @@ class ClientListSerializer(serializers.ModelSerializer):
                 'created_at': latest.created_at
             }
         return None
+
+from .models import ClientActionLog
+
+class ClientActionLogSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ClientActionLog
+        fields = ['id', 'action', 'details', 'created_at']
