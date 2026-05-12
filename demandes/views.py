@@ -377,9 +377,30 @@ class DemandeViewSet(viewsets.ModelViewSet):
         template = None
         vars = []
 
+        # Helper : résoudre le prix depuis formulaire_data (calculateur frontend) ou demande.prix
+        def _get_prix_display():
+            form = demande.formulaire_data or {}
+            # Chercher dans formulaire_data (mêmes clés que le frontend getTotalPrice)
+            for key in ['total', 'total_ht', 'total_ttc', 'prix_total', 'montant_total', 'montant', 'prix']:
+                val = form.get(key)
+                if val is not None:
+                    try:
+                        n = float(str(val).replace(' ', '').replace(',', '.'))
+                        if n > 0:
+                            # Formater avec séparateur de milliers
+                            return f"{n:,.0f}".replace(",", " ") + " MAD"
+                    except (ValueError, TypeError):
+                        pass
+            # Fallback sur le champ prix du modèle
+            if demande.prix is not None:
+                return f"{demande.prix:,.0f}".replace(",", " ") + " MAD"
+            return "Sur devis"
+
+        prix_display = _get_prix_display()
+
         if doc_type == 'devis':
             template = 'envoi_devis_client'
-            vars = [client_name, f"D-{demande.id:05d}", demande.service, f"{demande.prix}"]
+            vars = [client_name, f"D-{demande.id:05d}", demande.service, prix_display]
             
         elif doc_type == 'png':
             template = 'envoi_resume_client'
@@ -388,13 +409,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 demande.service, 
                 demande.date_intervention.strftime('%d/%m/%Y') if demande.date_intervention else "Non définie",
                 demande.heure_intervention or "—",
-                f"{demande.prix}"
+                prix_display
             ]
             
         elif doc_type == 'facture':
             template = 'facture_client'
             # Format price with thousands separator
-            formatted_total = f"{demande.prix:,.2f}".replace(",", " ") if demande.prix else "0.00"
+            formatted_total = f"{demande.prix:,.2f}".replace(",", " ") if demande.prix else prix_display
             invoice_num = f"AM/F{demande.id:03d}/{datetime.datetime.now().year}"
             
             vars = [

@@ -246,14 +246,31 @@ class DemandeSerializer(serializers.ModelSerializer):
                 client_phone = instance.client.phone if instance.client else None
                 if client_phone:
                     # Construct absolute media URL
-                    media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}" if doc else None
+                    media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}" if doc and doc.fichier and doc.fichier.name else None
                     
                     if media_url:
                         client_name = instance.client.display_name if instance.client else "Client"
+                        
+                        # Résoudre le prix depuis formulaire_data ou instance.prix
+                        form = instance.formulaire_data or {}
+                        prix_display = "Sur devis"
+                        for key in ['total', 'total_ht', 'total_ttc', 'prix_total', 'montant_total', 'montant', 'prix']:
+                            val = form.get(key)
+                            if val is not None:
+                                try:
+                                    n = float(str(val).replace(' ', '').replace(',', '.'))
+                                    if n > 0:
+                                        prix_display = f"{n:,.0f}".replace(",", " ") + " MAD"
+                                        break
+                                except (ValueError, TypeError):
+                                    pass
+                        if prix_display == "Sur devis" and instance.prix is not None:
+                            prix_display = f"{instance.prix:,.0f}".replace(",", " ") + " MAD"
+                        
                         # Variables based on the proposed templates
                         if doc_type == 'devis':
                             template = 'envoi_devis_client'
-                            vars = [client_name, f"D-{instance.id:05d}", instance.service, f"{instance.prix}"]
+                            vars = [client_name, f"D-{instance.id:05d}", instance.service, prix_display]
                             wa_media_type = 'document'
                         else:
                             template = 'envoi_resume_client'
@@ -262,7 +279,7 @@ class DemandeSerializer(serializers.ModelSerializer):
                                 instance.service, 
                                 instance.date_intervention.strftime('%d/%m/%Y') if instance.date_intervention else "Non définie",
                                 instance.heure_intervention or "—",
-                                f"{instance.prix}"
+                                prix_display
                             ]
                             wa_media_type = 'image'
                         
