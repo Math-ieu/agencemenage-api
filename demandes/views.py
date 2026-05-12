@@ -320,12 +320,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=500)
 
     @action(detail=True, methods=['post'])
-    @action(detail=True, methods=['post'])
     def send_whatsapp(self, request, pk=None):
         """Action manuelle pour envoyer un document spécifique via WhatsApp."""
         demande = self.get_object()
         doc_type = request.data.get('type')  # 'devis', 'png', 'cao_profil', 'feedback'
         profile_agent_id = request.data.get('profile_agent_id')
+        # Le frontend peut fournir directement l'URL publique du document uploadé
+        frontend_media_url = request.data.get('media_url')
         
         if not doc_type:
             return Response({'error': 'Le type de document est requis.'}, status=400)
@@ -339,6 +340,9 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 
         client_name = demande.client.display_name if demande.client else demande.client_name or demande.formulaire_data.get('nom', 'Client')
         
+        import logging
+        logger = logging.getLogger(__name__)
+        
         # Initialisation
         media_url = None
         wa_media_type = None
@@ -348,24 +352,26 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         # Pour les types utilisant un document (devis, png, facture)
         if doc_type in ['devis', 'png', 'facture']:
-            doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
+            # Priorité 1 : URL fournie par le frontend (document fraîchement uploadé)
+            if frontend_media_url:
+                media_url = frontend_media_url
+                logger.info(f"WhatsApp: Using frontend-provided media_url: {media_url}")
+            else:
+                # Priorité 2 : Construire l'URL depuis le dernier document en base
+                doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
 
-            if not doc:
-                # Si c'est un cao_profil et qu'on n'a pas encore de PNG, on peut soit générer à la volée, 
-                # soit renvoyer une 404. Pour l'instant on garde la 404 mais avec un message clair.
-                return Response({'error': f'Aucun fichier visuelle (PNG) trouvé pour ce profil. Veuillez le ré-affecter pour générer sa fiche.'}, status=404)
-            
-            # Correction de l'URL pour la prod : assurer que c'est une URL publique accessible
-            # En production avec S3, doc.fichier.name contient déjà le chemin relatif.
-            # On s'assure de ne pas avoir de double slash et de passer par le proxy /api/media/
-            media_path = doc.fichier.name.lstrip('/')
-            media_url = f"{settings.API_BASE_URL}/api/media/{media_path}"
-            
-            import logging
-            logger = logging.getLogger(__name__)
-            logger.info(f"WhatsApp Media URL generated: {media_url} for type {doc_type}")
+                if not doc:
+                    return Response({'error': f'Aucun document de type "{doc_type}" trouvé. Veuillez d\'abord générer le document.'}, status=404)
+                
+                if not doc.fichier or not doc.fichier.name:
+                    return Response({'error': f'Le document existe mais n\'a pas de fichier attaché. Veuillez le re-générer.'}, status=404)
+                
+                media_path = doc.fichier.name.lstrip('/')
+                media_url = f"{settings.API_BASE_URL}/api/media/{media_path}"
+                logger.info(f"WhatsApp: Constructed media_url from DB: {media_url}")
             
             wa_media_type = 'document' if doc_type in ['devis', 'facture'] else 'image'
+            logger.info(f"WhatsApp: Final media_url={media_url}, type={wa_media_type}, phone={client_phone}")
 
         # Définition des templates et variables
         template = None

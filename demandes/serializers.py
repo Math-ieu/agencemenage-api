@@ -12,17 +12,26 @@ from agents.serializers import AgentListSerializer
 class DocumentSerializer(serializers.ModelSerializer):
     # URL sécurisée qui n'expose JAMAIS le chemin réel du fichier
     download_url = serializers.SerializerMethodField()
+    # URL publique accessible sans auth (pour WhatsApp, partage externe)
+    public_media_url = serializers.SerializerMethodField()
 
     class Meta:
         model = Document
-        fields = ['id', 'demande', 'type_document', 'nom', 'created_at', 'created_by', 'download_url']
-        read_only_fields = ['created_at', 'created_by', 'download_url']
+        fields = ['id', 'demande', 'type_document', 'fichier', 'nom', 'created_at', 'created_by', 'download_url', 'public_media_url']
+        read_only_fields = ['created_at', 'created_by', 'download_url', 'public_media_url']
 
     def get_download_url(self, obj):
         """Retourne l'URL de téléchargement sécurisé sans exposer le chemin physique."""
         if not obj.fichier:
             return None
         return f'/api/demandes/{obj.demande_id}/download/{obj.id}/'
+
+    def get_public_media_url(self, obj):
+        """Retourne l'URL publique via /api/media/ pour les partages externes (WhatsApp, etc.)."""
+        if not obj.fichier or not obj.fichier.name:
+            return None
+        media_path = obj.fichier.name.lstrip('/')
+        return f'{settings.API_BASE_URL}/api/media/{media_path}'
 
 
 class NRPLogSerializer(serializers.ModelSerializer):
