@@ -400,7 +400,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         if doc_type == 'devis':
             template = 'envoi_devis_client'
-            vars = [client_name, f"D-{demande.id:05d}", demande.service, prix_display]
+            vars = [client_name, f"D-{demande.id:05d}", demande.service]
             
         elif doc_type == 'png':
             template = 'envoi_resume_client'

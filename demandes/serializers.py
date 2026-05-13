@@ -270,7 +270,7 @@ class DemandeSerializer(serializers.ModelSerializer):
                         # Variables based on the proposed templates
                         if doc_type == 'devis':
                             template = 'envoi_devis_client'
-                            vars = [client_name, f"D-{instance.id:05d}", instance.service, prix_display]
+                            vars = [client_name, f"D-{instance.id:05d}", instance.service]
                             wa_media_type = 'document'
                         else:
                             template = 'envoi_resume_client'
