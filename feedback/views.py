@@ -34,6 +34,16 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         city = self.request.query_params.get('city')
         if city:
             qs = qs.filter(demande__client__city__icontains=city)
+            
+        mission_agent = self.request.query_params.get('mission__agent')
+        if mission_agent:
+            qs = qs.filter(
+                Q(mission__agent_id=mission_agent) | 
+                Q(mission__delegue_id=mission_agent) |
+                Q(mission__intervenants__id=mission_agent) |
+                Q(demande__profils_envoyes__id=mission_agent)
+            ).distinct()
+            
         return qs
 
     @action(detail=False, methods=['get'])
