@@ -21,22 +21,26 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
         return queryset
 
     def perform_create(self, serializer):
-        gesture = serializer.save(cree_par=self.request.user)
+        instance = serializer.save(cree_par=self.request.user)
+        # Link client if missing but demande is there
+        if instance.demande and not instance.client:
+            instance.client = instance.demande.client
+            instance.save()
         
         # Logic for updating Mission financials
-        if gesture.demande:
-            missions = gesture.demande.missions.all()
+        if instance.demande:
+            missions = instance.demande.missions.all()
             for mission in missions:
-                if gesture.gesture_type in ['facturation_annulee', 'intervention_gratuite']:
+                if instance.gesture_type in ['facturation_annulee', 'intervention_gratuite']:
                     # Cas A: Agency owes profile, client pays 0
                     mission.paiement_client_statut = 'facturation_annulee'
                     mission.montant_paye = 0
                     # The agency owes the profile the full share or a specific amount
                     # Here we use the part_profil defined in the gesture
-                    mission.montant_agence_doit_profil = gesture.part_profil
+                    mission.montant_agence_doit_profil = instance.part_profil
                     mission.profil_sera_paye = True
                     mission.save()
-                elif gesture.gesture_type == 'reduction_tarif':
+                elif instance.gesture_type == 'reduction_tarif':
                     # Cas B: Reduced CA
                     # We might want to update the mission's expected CA if needed
                     # For now, we just ensure the mission is aware of the gesture

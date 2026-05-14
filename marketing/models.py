@@ -84,13 +84,13 @@ class CommercialGesture(models.Model):
 
 class Campaign(models.Model):
     TARGET_CHOICES = [
-        ('Client', 'Client'),
-        ('Profil', 'Profil'),
+        ('client', 'Client'),
+        ('profil', 'Profil'),
     ]
     SEGMENT_CHOICES = [
-        ('Tous', 'Tous'),
-        ('Particulier', 'Particulier'),
-        ('Entreprise', 'Entreprise'),
+        ('tous', 'Tous'),
+        ('particulier', 'Particulier'),
+        ('entreprise', 'Entreprise'),
     ]
     STATUS_CHOICES = [
         ('brouillon', 'Brouillon'),
@@ -102,7 +102,7 @@ class Campaign(models.Model):
     title = models.CharField(max_length=255)
     message = models.TextField()
     target = models.CharField(max_length=20, choices=TARGET_CHOICES)
-    segment = models.CharField(max_length=20, choices=SEGMENT_CHOICES, default='Tous')
+    segment = models.CharField(max_length=20, choices=SEGMENT_CHOICES, default='tous')
     criteria = models.CharField(max_length=255, blank=True)
     channel = models.JSONField(default=list, blank=True)
     city = models.CharField(max_length=100, blank=True)
