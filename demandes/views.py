@@ -594,15 +594,25 @@ class DemandeViewSet(viewsets.ModelViewSet):
             logo_path = os.path.join(settings.BASE_DIR, 'assets', 'logo.png')
             
             # On génère la fiche
+            photo_input = None
+            if agent.photo:
+                try:
+                    photo_input = agent.photo.open('rb')
+                except Exception as photo_err:
+                    logger.warning(f"Impossible d'ouvrir la photo de l'agent {agent.id}: {photo_err}")
+
             img = generate_profile_card(
                 nom=agent.last_name,
                 prenom=agent.first_name,
                 age=age if isinstance(age, int) else 30,
                 adresse=f"{agent.neighborhood} - {agent.city}",
                 logo_path=logo_path if os.path.exists(logo_path) else None,
-                profile_photo_path=agent.photo.open('rb') if agent.photo else None,
+                profile_photo_path=photo_input,
                 output_path=None # Return PIL object
             )
+
+            if photo_input:
+                photo_input.close()
             
             # Sauvegarde en mémoire
             buffer = BytesIO()

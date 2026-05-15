@@ -7,8 +7,17 @@ pour Agence Ménage — Groupe Agence Premium.
 
 import math
 import os
+import io
 from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
+
+# Support for HEIC/HEIF (common on iPhone)
+try:
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+except ImportError:
+    pass
+
 
 
 # ── Constantes visuelles ────────────────────────────────────────────────────
@@ -111,7 +120,11 @@ def _paste_profile_photo(img: Image.Image,
         photo = Image.new("RGBA", (PHOTO_R * 2, PHOTO_R * 2), (180, 180, 180, 255))
     else:
         try:
-            # profile_photo_input can be a path (str) or a file-like object
+            # If it's a file-like object, read it into BytesIO to ensure it's seekable
+            if hasattr(profile_photo_input, 'read'):
+                content = profile_photo_input.read()
+                profile_photo_input = io.BytesIO(content)
+
             photo = Image.open(profile_photo_input).convert("RGBA")
             # Recadrage carré centré (portrait)
             pw, ph = photo.size
@@ -122,13 +135,16 @@ def _paste_profile_photo(img: Image.Image,
             photo = photo.crop((left, top, left + side, top + side))
         except Exception as e:
             print(f"Error opening profile photo: {e}")
+            # Robust fallback: grey circle
             photo = Image.new("RGBA", (PHOTO_R * 2, PHOTO_R * 2), (180, 180, 180, 255))
 
-    photo = photo.resize((PHOTO_R * 2, PHOTO_R * 2), Image.LANCZOS)
-    mask  = _circle_mask(PHOTO_R * 2)
-    photo.putalpha(mask)
-
-    img.paste(photo, (CX - PHOTO_R, CY - PHOTO_R), photo)
+    try:
+        photo = photo.resize((PHOTO_R * 2, PHOTO_R * 2), Image.LANCZOS)
+        mask  = _circle_mask(PHOTO_R * 2)
+        photo.putalpha(mask)
+        img.paste(photo, (CX - PHOTO_R, CY - PHOTO_R), photo)
+    except Exception as e:
+        print(f"Error processing profile photo: {e}")
 
 
 # ── Logo ─────────────────────────────────────────────────────────────────────
