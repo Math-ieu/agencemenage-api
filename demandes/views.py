@@ -444,11 +444,21 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 profile_link = f"https://profil.agencemenage.ma/view/{share.uuid}"
                 vars = [client_name, profile_link]
 
+                # Tenter de trouver la fiche profil PNG correspondante
+                media_url = None
+                wa_media_type = None
+                
+                doc = demande.documents.filter(type_document='png', nom__icontains=agent.last_name).order_by('-created_at').first()
+                if doc and doc.fichier:
+                    media_path = doc.fichier.name.lstrip('/')
+                    media_url = f"{settings.API_BASE_URL}/api/media/{media_path}"
+                    wa_media_type = 'image'
+
                 res = WhatsAppService.send_template_message(
                     to=client_phone,
                     template_name=template,
-                    media_url=None,
-                    media_type=None,
+                    media_url=media_url,
+                    media_type=wa_media_type,
                     variables=vars
                 )
 
@@ -533,42 +543,43 @@ class DemandeViewSet(viewsets.ModelViewSet):
         
         # --- GÉNÉRATION FICHE PROFIL PNG ---
         try:
+            from io import BytesIO
+            from django.core.files.base import ContentFile
+            
             # Calcul de l'âge
             age = "—"
             if agent.birth_date:
                 today = datetime.date.today()
                 age = today.year - agent.birth_date.year - ((today.month, today.day) < (agent.birth_date.month, agent.birth_date.day))
             
-            # Chemins
+            # Logo path
             logo_path = os.path.join(settings.BASE_DIR, 'assets', 'logo.png')
-            photo_path = agent.photo.path if agent.photo else None
             
-            # On génère un nom de fichier unique
-            filename = f"FICHE_{agent.first_name}_{agent.last_name}_{demande.id}.png".replace(' ', '_')
-            output_dir = os.path.join(settings.MEDIA_ROOT, 'documents', datetime.datetime.now().strftime("%Y/%m"))
-            os.makedirs(output_dir, exist_ok=True)
-            output_path = os.path.join(output_dir, filename)
-            
-            # On génère la fiche systématiquement (le générateur gère l'absence de photo)
-            generate_profile_card(
+            # On génère la fiche
+            img = generate_profile_card(
                 nom=agent.last_name,
                 prenom=agent.first_name,
                 age=age if isinstance(age, int) else 30,
                 adresse=f"{agent.neighborhood} - {agent.city}",
-                logo_path=logo_path,
-                profile_photo_path=photo_path if photo_path and os.path.exists(photo_path) else "",
-                output_path=output_path
+                logo_path=logo_path if os.path.exists(logo_path) else None,
+                profile_photo_path=agent.photo.open('rb') if agent.photo else None,
+                output_path=None # Return PIL object
             )
             
+            # Sauvegarde en mémoire
+            buffer = BytesIO()
+            img.save(buffer, format='PNG', optimize=True)
+            content = buffer.getvalue()
+            
             # Enregistrement en tant que Document
-            relative_path = os.path.relpath(output_path, settings.MEDIA_ROOT)
-            Document.objects.create(
+            filename = f"FICHE_{agent.first_name}_{agent.last_name}_{demande.id}.png".replace(' ', '_')
+            doc_obj = Document.objects.create(
                 demande=demande,
                 type_document='png',
                 nom=f"Fiche Profil {agent.full_name}",
-                fichier=relative_path,
                 created_by=request.user
             )
+            doc_obj.fichier.save(filename, ContentFile(content))
         except Exception as e:
             # On log l'erreur sans bloquer le reste (le partage de lien est prioritaire)
             import logging

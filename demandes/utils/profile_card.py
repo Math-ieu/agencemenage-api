@@ -95,7 +95,7 @@ def _draw_background_shapes(img: Image.Image) -> None:
 # ── Composition de la photo de profil (cercle avec fond cyan) ───────────────
 
 def _paste_profile_photo(img: Image.Image,
-                          profile_photo_path: str) -> None:
+                          profile_photo_input) -> None:
     # Fond cyan (grand cercle)
     CIRCLE_BG   = (100, 200, 210)   # cyan clair
     OUTER_R     = 195               # rayon du fond
@@ -107,17 +107,22 @@ def _paste_profile_photo(img: Image.Image,
     _draw_filled_circle(draw, CX, CY, OUTER_R, CIRCLE_BG)
 
     # Photo découpée en cercle
-    try:
-        photo = Image.open(profile_photo_path).convert("RGBA")
-        # Recadrage carré centré (portrait)
-        pw, ph = photo.size
-        side = min(pw, ph)
-        left = (pw - side) // 2
-        top  = max(0, int(ph * 0.05))          # légèrement vers le haut pour centrer le visage
-        top  = min(top, ph - side)
-        photo = photo.crop((left, top, left + side, top + side))
-    except Exception:
+    if not profile_photo_input:
         photo = Image.new("RGBA", (PHOTO_R * 2, PHOTO_R * 2), (180, 180, 180, 255))
+    else:
+        try:
+            # profile_photo_input can be a path (str) or a file-like object
+            photo = Image.open(profile_photo_input).convert("RGBA")
+            # Recadrage carré centré (portrait)
+            pw, ph = photo.size
+            side = min(pw, ph)
+            left = (pw - side) // 2
+            top  = max(0, int(ph * 0.05))          # légèrement vers le haut pour centrer le visage
+            top  = min(top, ph - side)
+            photo = photo.crop((left, top, left + side, top + side))
+        except Exception as e:
+            print(f"Error opening profile photo: {e}")
+            photo = Image.new("RGBA", (PHOTO_R * 2, PHOTO_R * 2), (180, 180, 180, 255))
 
     photo = photo.resize((PHOTO_R * 2, PHOTO_R * 2), Image.LANCZOS)
     mask  = _circle_mask(PHOTO_R * 2)
@@ -143,15 +148,13 @@ def _remove_bg(img_rgba: Image.Image,
     return Image.fromarray(data.astype(np.uint8), "RGBA")
 
 
-def _paste_logo(img: Image.Image, logo_path: str) -> None:
+def _paste_logo(img: Image.Image, logo_input) -> None:
+    if not logo_input:
+        return
     try:
-        logo = Image.open(logo_path).convert("RGBA")
-        # On tente de supprimer le fond si nécessaire (le logo est souvent sur fond noir ou blanc)
-        # Mais ici on va être prudent, si c'est déjà transparent on laisse.
-        if logo.mode == 'RGB':
-            logo = logo.convert('RGBA')
-        # logo = _remove_bg(logo, bg_color=(0, 0, 0), threshold=40)
-    except Exception:
+        logo = Image.open(logo_input).convert("RGBA")
+    except Exception as e:
+        print(f"Error opening logo: {e}")
         return
 
     target_w = 160
@@ -187,12 +190,14 @@ def generate_profile_card(
     prenom: str,
     age: int,
     adresse: str,
-    logo_path: str,
-    profile_photo_path: str,
-    output_path: str = "fiche_profil.png",
-) -> str:
+    logo_path,
+    profile_photo_path,
+    output_path = None,
+) -> any:
     """
-    Génère la fiche profil et l'enregistre dans `output_path`.
+    Génère la fiche profil. 
+    Si `output_path` est un chemin, enregistre l'image.
+    Si `output_path` est None, retourne l'objet Image.
     """
     # Canvas de base
     img = Image.new("RGB", (W, H), BG_COLOR)
@@ -209,5 +214,8 @@ def generate_profile_card(
     # 4. Texte
     _draw_text(img, nom, prenom, age, adresse)
 
-    img.save(output_path, "PNG", optimize=True)
-    return output_path
+    if output_path:
+        img.save(output_path, "PNG", optimize=True)
+        return output_path
+    
+    return img
