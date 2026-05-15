@@ -446,13 +446,22 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
                 # Tenter de trouver la fiche profil PNG correspondante
                 media_url = None
-                wa_media_type = None
+                wa_media_type = 'image'
                 
                 doc = demande.documents.filter(type_document='png', nom__icontains=agent.last_name).order_by('-created_at').first()
+                
+                # Si manquant, tenter de générer à la volée
+                if not doc:
+                    doc = self._generate_agent_profile_card(demande, agent, request.user)
+                
                 if doc and doc.fichier:
                     media_path = doc.fichier.name.lstrip('/')
                     media_url = f"{settings.API_BASE_URL}/api/media/{media_path}"
-                    wa_media_type = 'image'
+                else:
+                    # FALLBACK CRITIQUE : Si aucune fiche ne peut être générée, envoyer une image par défaut
+                    # pour éviter l'erreur de template WhatsApp (Format mismatch)
+                    media_url = "https://www.agencemenage.ma/images/logo.png"
+                    logger.warning(f"WhatsApp: Fallback logo used for agent {agent.id} because PNG generation failed.")
 
                 res = WhatsAppService.send_template_message(
                     to=client_phone,
@@ -531,20 +540,30 @@ class DemandeViewSet(viewsets.ModelViewSet):
         except Agent.DoesNotExist:
             return Response({'error': 'Profil introuvable'}, status=404)
         
-        if demande.profils_envoyes.filter(pk=agent.pk).exists():
-            # Return existing share if any, or create one
-            share = ProfilShare.objects.filter(demande=demande, agent=agent).first()
-            if not share:
-                share = ProfilShare.objects.create(demande=demande, agent=agent)
-            return Response({'success': True, 'message': 'Profil déjà envoyé.', 'share_id': share.uuid})
+        if not demande.profils_envoyes.filter(pk=agent.pk).exists():
+            demande.profils_envoyes.add(agent)
             
-        demande.profils_envoyes.add(agent)
-        share = ProfilShare.objects.create(demande=demande, agent=agent)
+        share = ProfilShare.objects.filter(demande=demande, agent=agent).first()
+        if not share:
+            share = ProfilShare.objects.create(demande=demande, agent=agent)
         
         # --- GÉNÉRATION FICHE PROFIL PNG ---
+        self._generate_agent_profile_card(demande, agent, request.user)
+
+        self._log_action(request.user, 'envoyer_profil', demande, extra_data={
+            'agent_id': agent.pk,
+            'agent_name': agent.full_name,
+            'share_id': str(share.uuid),
+            'client_name': demande.client.display_name if demande.client else 'Inconnu'
+        })
+        return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk, 'share_id': share.uuid})
+
+    def _generate_agent_profile_card(self, demande, agent, request_user):
+        """Helper to generate and save the profile card PNG."""
         try:
             from io import BytesIO
             from django.core.files.base import ContentFile
+            import os
             
             # Calcul de l'âge
             age = "—"
@@ -577,22 +596,15 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 demande=demande,
                 type_document='png',
                 nom=f"Fiche Profil {agent.full_name}",
-                created_by=request.user
+                created_by=request_user
             )
             doc_obj.fichier.save(filename, ContentFile(content))
+            return doc_obj
         except Exception as e:
-            # On log l'erreur sans bloquer le reste (le partage de lien est prioritaire)
             import logging
             logger = logging.getLogger(__name__)
             logger.error(f"Erreur lors de la génération de la fiche profil : {str(e)}")
-
-        self._log_action(request.user, 'envoyer_profil', demande, extra_data={
-            'agent_id': agent.pk,
-            'agent_name': agent.full_name,
-            'share_id': str(share.uuid),
-            'client_name': demande.client.display_name if demande.client else 'Inconnu'
-        })
-        return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk, 'share_id': share.uuid})
+            return None
 
     def _log_action(self, user, action, demande, extra_data=None):
         data = {'statut': demande.statut}
