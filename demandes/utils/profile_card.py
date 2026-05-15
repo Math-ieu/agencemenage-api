@@ -38,17 +38,31 @@ def _get_font(bold=True, size=28):
     font_name = 'Roboto-Bold.ttf' if bold else 'Roboto-Regular.ttf'
     custom_font_path = os.path.join(BASE_DIR, 'assets', 'fonts', font_name)
     
+    # Try custom fonts first, but handle corruption
     if os.path.exists(custom_font_path):
-        return ImageFont.truetype(custom_font_path, size)
+        try:
+            # Check if file is suspiciously small (e.g., contains "404: Not Found")
+            if os.path.getsize(custom_font_path) > 1000:
+                return ImageFont.truetype(custom_font_path, size)
+            else:
+                print(f"Warning: Custom font {font_name} is too small, skipping.")
+        except Exception as e:
+            print(f"Error loading custom font {font_name}: {e}")
         
+    # Fallback to system fonts
     FONT_PATHS = [
         "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
         "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf" if bold else "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
-        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf"
+        "/usr/share/fonts/truetype/freefont/FreeSansBold.ttf" if bold else "/usr/share/fonts/truetype/freefont/FreeSans.ttf",
+        "Arial.ttf",
+        "DejaVuSans.ttf"
     ]
     for path in FONT_PATHS:
-        if os.path.exists(path):
+        try:
             return ImageFont.truetype(path, size)
+        except Exception:
+            continue
+            
     return ImageFont.load_default()
 
 
