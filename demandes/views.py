@@ -456,10 +456,16 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 if doc and doc.fichier:
                     media_url = f"{settings.API_BASE_URL}{doc.fichier.url}"
                 else:
-                    # FALLBACK CRITIQUE : Si aucune fiche ne peut être générée, envoyer une image par défaut
-                    # pour éviter l'erreur de template WhatsApp (Format mismatch)
-                    media_url = "https://www.agencemenage.ma/images/logo.png"
+                    # FALLBACK CRITIQUE : Si aucune fiche ne peut être générée, envoyer le logo par défaut
+                    # car WhatsApp exige un média valide pour ce template.
+                    # On utilise l'URL du logo du site s'il existe, sinon un placeholder propre.
+                    media_url = "https://agencemenage.ma/favicon.ico" # Fallback temporaire valide
                     logger.warning(f"WhatsApp: Fallback logo used for agent {agent.id} because PNG generation failed.")
+                    # Optionnel: Essayer de trouver un document 'logo' dans la base
+                    logo_doc = Document.objects.filter(type_document='png', nom__icontains='logo').first()
+                    if logo_doc and logo_doc.fichier:
+                        media_url = f"{settings.API_BASE_URL}{logo_doc.fichier.url}"
+
 
                 res = WhatsAppService.send_template_message(
                     to=client_phone,
@@ -632,8 +638,36 @@ class DemandeViewSet(viewsets.ModelViewSet):
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
-            logger.error(f"Erreur lors de la génération de la fiche profil : {str(e)}")
-            return None
+            logger.error(f"Erreur lors de la génération de la fiche profil avec photo : {str(e)}")
+            
+            # DEUXIÈME TENTATIVE : Sans la photo (juste logo et texte)
+            try:
+                img = generate_profile_card(
+                    nom=agent.last_name,
+                    prenom=agent.first_name,
+                    age=age if isinstance(age, int) else 30,
+                    adresse=f"{agent.neighborhood} - {agent.city}",
+                    logo_path=logo_path if os.path.exists(logo_path) else None,
+                    profile_photo_path=None, # On force None pour éviter l'erreur de format
+                    output_path=None
+                )
+                
+                buffer = BytesIO()
+                img.save(buffer, format='PNG', optimize=True)
+                content = buffer.getvalue()
+                
+                filename = f"FICHE_SAFE_{agent.first_name}_{agent.last_name}_{demande.id}.png".replace(' ', '_')
+                doc_obj = Document.objects.create(
+                    demande=demande,
+                    type_document='png',
+                    nom=f"Fiche Profil (Sans Photo) {agent.full_name}",
+                    created_by=request_user
+                )
+                doc_obj.fichier.save(filename, ContentFile(content))
+                return doc_obj
+            except Exception as e2:
+                logger.error(f"Échec total de la génération de fiche profil (même sans photo) : {str(e2)}")
+                return None
 
     def _log_action(self, user, action, demande, extra_data=None):
         data = {'statut': demande.statut}
