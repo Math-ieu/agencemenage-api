@@ -366,8 +366,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 if not doc.fichier or not doc.fichier.name:
                     return Response({'error': f'Le document existe mais n\'a pas de fichier attaché. Veuillez le re-générer.'}, status=404)
                 
-                media_path = doc.fichier.name.lstrip('/')
-                media_url = f"{settings.API_BASE_URL}/api/media/{media_path}"
+                media_url = f"{settings.API_BASE_URL}{doc.fichier.url}"
                 logger.info(f"WhatsApp: Constructed media_url from DB: {media_url}")
             
             wa_media_type = 'document' if doc_type in ['devis', 'facture'] else 'image'
@@ -455,8 +454,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                     doc = self._generate_agent_profile_card(demande, agent, request.user)
                 
                 if doc and doc.fichier:
-                    media_path = doc.fichier.name.lstrip('/')
-                    media_url = f"{settings.API_BASE_URL}/api/media/{media_path}"
+                    media_url = f"{settings.API_BASE_URL}{doc.fichier.url}"
                 else:
                     # FALLBACK CRITIQUE : Si aucune fiche ne peut être générée, envoyer une image par défaut
                     # pour éviter l'erreur de template WhatsApp (Format mismatch)
