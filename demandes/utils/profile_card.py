@@ -121,6 +121,11 @@ def _paste_profile_photo(img: Image.Image,
     else:
         try:
             # If it's a file-like object, read it into BytesIO to ensure it's seekable
+            if hasattr(profile_photo_input, 'seek'):
+                try:
+                    profile_photo_input.seek(0)
+                except Exception:
+                    pass
             if hasattr(profile_photo_input, 'read'):
                 content = profile_photo_input.read()
                 profile_photo_input = io.BytesIO(content)
