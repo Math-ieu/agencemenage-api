@@ -556,6 +556,27 @@ class DemandeViewSet(viewsets.ModelViewSet):
         })
         return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk, 'share_id': share.uuid})
 
+    @action(detail=True, methods=['post'])
+    def retirer_profil(self, request, pk=None):
+        """Retirer un profil agent de cette demande."""
+        demande = self.get_object()
+        agent_id = request.data.get('agent_id')
+        if not agent_id:
+            return Response({'error': 'agent_id requis'}, status=400)
+        from agents.models import Agent
+        try:
+            agent = Agent.objects.get(pk=agent_id)
+        except Agent.DoesNotExist:
+            return Response({'error': 'Profil introuvable'}, status=404)
+
+        if demande.profils_envoyes.filter(pk=agent.pk).exists():
+            demande.profils_envoyes.remove(agent)
+            self._log_action(request.user, 'retirer_profil', demande, extra_data={
+                'agent_id': agent.pk,
+                'agent_name': agent.full_name,
+            })
+        return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk})
+
     def _generate_agent_profile_card(self, demande, agent, request_user):
         """Helper to generate and save the profile card PNG."""
         try:
