@@ -425,6 +425,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'mode_paiement',
             'part_agence',
             'parts_repartition',
+            'cao',
         ]
 
     def get_profil_name(self, obj):

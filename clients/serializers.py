@@ -36,7 +36,8 @@ class ClientListSerializer(serializers.ModelSerializer):
                 'statut': latest.statut,
                 'statut_paiement': latest.statut_paiement,
                 'commercial': latest.assigned_to.full_name if latest.assigned_to else None,
-                'created_at': latest.created_at
+                'created_at': latest.created_at,
+                'cao': latest.cao
             }
         return None
 
