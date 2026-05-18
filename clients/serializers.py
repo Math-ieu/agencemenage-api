@@ -31,10 +31,15 @@ class ClientListSerializer(serializers.ModelSerializer):
     def get_latest_demande(self, obj):
         latest = obj.demandes.order_by('-created_at').first()
         if latest:
+            fact = latest.formulaire_data.get('facturation', {}) if isinstance(latest.formulaire_data, dict) else {}
+            statut_paiement_ui = fact.get('statut_paiement_ui')
+            facturation_annulee = fact.get('facturation_annulee', False)
             return {
                 'id': latest.id,
                 'statut': latest.statut,
                 'statut_paiement': latest.statut_paiement,
+                'statut_paiement_ui': statut_paiement_ui,
+                'facturation_annulee': facturation_annulee,
                 'commercial': latest.assigned_to.full_name if latest.assigned_to else None,
                 'created_at': latest.created_at,
                 'cao': latest.cao
