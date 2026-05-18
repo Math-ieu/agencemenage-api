@@ -5,7 +5,6 @@ SERVICES_PARTICULIERS = [
     "grand ménage",
     "ménage air bnb",
     "ménage airbnb",
-    "nettoyage post-déménagement",
     "ménage fin de chantier",
     "auxiliaire de vie",
     "ménage post-sinistre"
