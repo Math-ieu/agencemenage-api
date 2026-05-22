@@ -17,7 +17,7 @@ class FeedbackViewSet(viewsets.ModelViewSet):
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated()]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
-    filterset_fields = ['client', 'note_agence', 'note_intervenant']
+    filterset_fields = ['note_agence', 'note_intervenant']
     search_fields = [
         'commentaire', 
         'demande__client__first_name',
@@ -34,6 +34,10 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         city = self.request.query_params.get('city')
         if city:
             qs = qs.filter(demande__client__city__icontains=city)
+            
+        client = self.request.query_params.get('client')
+        if client:
+            qs = qs.filter(Q(client_id=client) | Q(demande__client_id=client))
             
         mission_agent = self.request.query_params.get('mission__agent')
         if mission_agent:
@@ -105,14 +109,21 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         })
 
     def perform_create(self, serializer):
-        feedback = serializer.save()
+        # Automatically populate client from demande or mission if not provided
+        demande = serializer.validated_data.get('demande')
+        mission = serializer.validated_data.get('mission')
+        client = serializer.validated_data.get('client')
+        
+        if not client:
+            if demande:
+                client = demande.client
+            elif mission and mission.demande:
+                client = mission.demande.client
+                
+        feedback = serializer.save(client=client)
 
         # Update client opt-out if requested
         if feedback.opt_out:
-            client = feedback.client
-            if not client and feedback.demande:
-                client = feedback.demande.client
-            
             if client:
                 client.opt_out_feedback = True
                 client.save()
