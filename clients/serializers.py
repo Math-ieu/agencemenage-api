@@ -25,7 +25,7 @@ class ClientListSerializer(serializers.ModelSerializer):
             'id', 'display_name', 'first_name', 'last_name', 'entity_name',
             'phone', 'email', 'segment', 'city', 'neighborhood', 'address', 
             'created_at', 'demandes_count', 'latest_demande',
-            'avis_commercial', 'avis_operationnel'
+            'avis_commercial', 'avis_operationnel', 'is_blacklisted'
         ]
 
     def get_latest_demande(self, obj):

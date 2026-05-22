@@ -34,6 +34,7 @@ class Client(models.Model):
     avis_commercial = models.TextField(blank=True, verbose_name="Avis commercial")
     avis_operationnel = models.TextField(blank=True, verbose_name="Avis opérationnel")
     is_archived = models.BooleanField(default=False, db_index=True)
+    is_blacklisted = models.BooleanField(default=False, db_index=True, verbose_name="Blacklisté")
     opt_out_feedback = models.BooleanField(default=False, verbose_name="Désinscription Feedback")
     
     assigned_commercial = models.ForeignKey(

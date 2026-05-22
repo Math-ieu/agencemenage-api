@@ -76,6 +76,7 @@ class Agent(models.Model):
     attestation_file = models.FileField(upload_to='agents/attestations/', blank=True, null=True)
     fiche_antropometrique = models.FileField(upload_to='agents/fiches_antropometriques/', blank=True, null=True)
     is_archived = models.BooleanField(default=False, db_index=True)
+    is_blacklisted = models.BooleanField(default=False, db_index=True, verbose_name="Blacklisté")
 
     class Meta:
         verbose_name = 'Agent / Profil'

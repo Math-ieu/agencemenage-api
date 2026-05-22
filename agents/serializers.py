@@ -103,5 +103,5 @@ class AgentListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'uuid', 'first_name', 'last_name', 'full_name', 'phone', 'whatsapp',
             'poste', 'statut', 'city', 'neighborhood', 'experience', 
-            'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating'
+            'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating', 'is_blacklisted'
         ]
