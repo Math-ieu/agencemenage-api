@@ -260,3 +260,85 @@ class ProfilShare(models.Model):
 
     def __str__(self):
         return f"Partage {self.agent} pour {self.demande}"
+
+
+from django.db.models.signals import pre_save, post_save
+from django.dispatch import receiver
+
+@receiver(pre_save, sender=Demande)
+def log_demande_changes(sender, instance, **kwargs):
+    if not instance.pk:
+        return
+
+    try:
+        old_instance = Demande.objects.get(pk=instance.pk)
+    except Demande.DoesNotExist:
+        return
+
+    client = instance.client or old_instance.client
+    if not client:
+        return
+
+    from clients.models import ClientActionLog
+
+    # Check for changes in facturation
+    old_fact = (old_instance.formulaire_data or {}).get('facturation', {}) if isinstance(old_instance.formulaire_data, dict) else {}
+    new_fact = (instance.formulaire_data or {}).get('facturation', {}) if isinstance(instance.formulaire_data, dict) else {}
+
+    old_statut_ui = old_fact.get('statut_paiement_ui') or old_instance.formulaire_data.get('statut_paiement_ui') if isinstance(old_instance.formulaire_data, dict) else None
+    new_statut_ui = new_fact.get('statut_paiement_ui') or instance.formulaire_data.get('statut_paiement_ui') if isinstance(instance.formulaire_data, dict) else None
+
+    if not old_statut_ui:
+        old_statut_ui = getattr(old_instance, 'statut_paiement_ui', None)
+    if not new_statut_ui:
+        new_statut_ui = getattr(instance, 'statut_paiement_ui', None)
+
+    old_annule = old_fact.get('facturation_annulee', False)
+    new_annule = new_fact.get('facturation_annulee', False)
+
+    # 1. Facturation annulée
+    if new_annule and not old_annule:
+        raison = new_fact.get('annulation_raison') or instance.formulaire_data.get('annulation_raison') or 'Non spécifiée'
+        profil_paye = new_fact.get('profil_sera_paye') or instance.formulaire_data.get('profil_sera_paye') or False
+        montant_profil = new_fact.get('montant_profil_annulation') or instance.formulaire_data.get('montant_profil_annulation') or 0
+        
+        details_str = f"Raison : {raison} | "
+        if profil_paye:
+            details_str += f"Profil payé : {montant_profil} MAD"
+        else:
+            details_str += "Profil non payé"
+            
+        ClientActionLog.objects.create(
+            client=client,
+            action="Facturation annulée",
+            details=details_str
+        )
+    # 2. Modification du statut paiement
+    elif new_statut_ui != old_statut_ui and new_statut_ui:
+        ClientActionLog.objects.create(
+            client=client,
+            action="Modification du besoin",
+            details=f"Statut paiement → {new_statut_ui}"
+        )
+    # 3. Modification du statut de la demande
+    elif instance.statut != old_instance.statut:
+        statut_map = dict(Demande.STATUT_CHOICES)
+        old_lbl = statut_map.get(old_instance.statut, old_instance.statut)
+        new_lbl = statut_map.get(instance.statut, instance.statut)
+        
+        ClientActionLog.objects.create(
+            client=client,
+            action="Modification du besoin",
+            details=f"Statut demande : {old_lbl} → {new_lbl}"
+        )
+
+@receiver(post_save, sender=Demande)
+def log_demande_creation(sender, instance, created, **kwargs):
+    if created and instance.client:
+        from clients.models import ClientActionLog
+        ClientActionLog.objects.create(
+            client=instance.client,
+            action="Nouveau besoin créé",
+            details=f"Service : {instance.service} | Tarif : {instance.prix or 'À définir'} MAD"
+        )
+

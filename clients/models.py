@@ -73,3 +73,35 @@ class ClientActionLog(models.Model):
         ordering = ['-created_at']
         verbose_name = 'Historique Action Client'
         verbose_name_plural = 'Historiques Actions Client'
+
+
+from django.db.models.signals import pre_save, post_save
+from django.dispatch import receiver
+
+@receiver(post_save, sender=Client)
+def log_client_creation(sender, instance, created, **kwargs):
+    if created:
+        ClientActionLog.objects.create(
+            client=instance,
+            action="Création du client",
+            details="Fiche client créée"
+        )
+
+@receiver(pre_save, sender=Client)
+def log_client_changes(sender, instance, **kwargs):
+    if not instance.pk:
+        return
+    try:
+        old_instance = Client.objects.get(pk=instance.pk)
+    except Client.DoesNotExist:
+        return
+        
+    if instance.is_blacklisted != old_instance.is_blacklisted:
+        action_name = "Client blacklisté" if instance.is_blacklisted else "Client retiré de la blacklist"
+        details_str = "Le client a été ajouté à la liste noire." if instance.is_blacklisted else "Le client a été retiré de la liste noire."
+        ClientActionLog.objects.create(
+            client=instance,
+            action=action_name,
+            details=details_str
+        )
+
