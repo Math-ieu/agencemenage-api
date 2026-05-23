@@ -70,7 +70,7 @@ class Mission(models.Model):
     montant_encaisse_profil = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     mode_paiement_reel = models.CharField(max_length=20, choices=MODE_CHOICES, blank=True)
     date_paiement = models.DateField(null=True, blank=True)
-    paiement_client_statut = models.CharField(max_length=20, choices=PAIEMENT_STATUT_CHOICES, default=PAIEMENT_NON_PAYE)
+    paiement_client_statut = models.CharField(max_length=30, choices=PAIEMENT_STATUT_CHOICES, default=PAIEMENT_NON_PAYE)
     justificatif_financier = models.FileField(upload_to='missions/finance/', null=True, blank=True)
 
     part_profil_versee = models.BooleanField(default=False)
