@@ -27,13 +27,30 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
             instance.client = instance.demande.client
             instance.save()
         
-        # Logic for updating Mission financials
+        # Logic for updating Mission financials and Demande financials
         if instance.demande:
+            # Apply direct price reduction to Demande
+            from decimal import Decimal
+            dem = instance.demande
+            if instance.gesture_type == 'intervention_gratuite':
+                dem.prix = Decimal(0)
+                dem.statut_paiement = 'integral'
+                dem.save()
+            elif instance.gesture_type == 'reduction_tarif':
+                current_price = dem.prix or Decimal(0)
+                reduction_value = Decimal(instance.reduction_value or 0)
+                if instance.reduction_type == 'pourcentage':
+                    new_price = current_price * (Decimal(1) - reduction_value / Decimal(100))
+                else:
+                    new_price = max(Decimal(0), current_price - reduction_value)
+                dem.prix = new_price
+                dem.save()
+
             missions = instance.demande.missions.all()
             for mission in missions:
                 if instance.gesture_type in ['facturation_annulee', 'intervention_gratuite']:
                     # Cas A: Agency owes profile, client pays 0
-                    mission.paiement_client_statut = 'facturation_annulee'
+                    mission.paiement_client_statut = 'intervention_gratuite' if instance.gesture_type == 'intervention_gratuite' else 'facturation_annulee'
                     mission.montant_paye = 0
                     # The agency owes the profile the full share or a specific amount
                     # Here we use the part_profil defined in the gesture

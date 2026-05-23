@@ -32,6 +32,7 @@ class Mission(models.Model):
     PAIEMENT_AGENCE_PAYEE = 'agence_payee_client'
     PAIEMENT_PROFIL_PAYE = 'profil_paye_client'
     PAIEMENT_ANNULE = 'facturation_annulee'
+    PAIEMENT_GRATUIT = 'intervention_gratuite'
     PAIEMENT_STATUT_CHOICES = [
         (PAIEMENT_NON_PAYE, 'Non payé'),
         (PAIEMENT_EN_ATTENTE, 'Paiement en attente'),
@@ -40,6 +41,7 @@ class Mission(models.Model):
         (PAIEMENT_AGENCE_PAYEE, 'Agence payée / Client'),
         (PAIEMENT_PROFIL_PAYE, 'Profil payé / Client'),
         (PAIEMENT_ANNULE, 'Facturation annulée'),
+        (PAIEMENT_GRATUIT, 'Intervention gratuite'),
     ]
 
     MODE_VIREMENT = 'virement'
