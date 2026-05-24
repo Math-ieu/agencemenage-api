@@ -18,6 +18,7 @@ class AgentViewSet(viewsets.ModelViewSet):
     ordering = ['-created_at']
 
     def get_permissions(self):
+        from accounts.permissions import RoleBasedPermission
         if self.action == 'retrieve':
             lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
             lookup_value = self.kwargs.get(lookup_url_kwarg)
@@ -30,11 +31,11 @@ class AgentViewSet(viewsets.ModelViewSet):
                     return [AllowAny()]
             except ValueError:
                 # If it's an integer ID, require authentication
-                return [IsAuthenticated()]
+                return [IsAuthenticated(), RoleBasedPermission()]
                 
         if self.action == 'by_share':
             return [AllowAny()]
-        return [IsAuthenticated()]
+        return [IsAuthenticated(), RoleBasedPermission()]
 
     def get_object(self):
         """Allow lookup by ID or UUID."""

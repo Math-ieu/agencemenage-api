@@ -78,6 +78,11 @@ class CommercialGesture(models.Model):
     archived = models.BooleanField(default=False)
     created_at = models.DateTimeField(auto_now_add=True)
 
+    def save(self, *args, **kwargs):
+        if self.demande:
+            self.client = self.demande.client
+        super().save(*args, **kwargs)
+
     def __str__(self):
         return f"Geste {self.id} - {self.client}"
 

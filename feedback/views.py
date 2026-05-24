@@ -13,9 +13,10 @@ class FeedbackViewSet(viewsets.ModelViewSet):
     serializer_class = FeedbackSerializer
 
     def get_permissions(self):
+        from accounts.permissions import RoleBasedPermission
         if self.action == 'create':
             return [permissions.AllowAny()]
-        return [permissions.IsAuthenticated()]
+        return [permissions.IsAuthenticated(), RoleBasedPermission()]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['note_agence', 'note_intervenant']
     search_fields = [

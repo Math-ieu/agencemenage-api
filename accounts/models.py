@@ -21,14 +21,20 @@ class UserManager(BaseUserManager):
 
 class User(AbstractBaseUser, PermissionsMixin):
     ADMIN = 'admin'
-    COMMERCIAL = 'commercial'
+    MODERATEUR = 'moderateur'
     RESPONSABLE_COMMERCIAL = 'responsable_commercial'
+    COMMERCIAL = 'commercial'
+    RESPONSABLE_OPERATIONS = 'responsable_operations'
+    CHARGE_OPERATIONS = 'charge_operations'
     OPERATIONNEL = 'operationnel'
 
     ROLE_CHOICES = [
         (ADMIN, 'Administrateur'),
-        (COMMERCIAL, 'Commercial'),
+        (MODERATEUR, 'Modérateur'),
         (RESPONSABLE_COMMERCIAL, 'Responsable Commercial'),
+        (COMMERCIAL, 'Commercial'),
+        (RESPONSABLE_OPERATIONS, 'Responsable des Opérations'),
+        (CHARGE_OPERATIONS, 'Chargée des Opérations'),
         (OPERATIONNEL, 'Opérationnel'),
     ]
 

@@ -12,6 +12,10 @@ from django.utils import timezone
 
 
 class FactureViewSet(viewsets.ModelViewSet):
+    from rest_framework.permissions import IsAuthenticated
+    from accounts.permissions import RoleBasedPermission
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+
     queryset = Facture.objects.select_related('client', 'demande').prefetch_related('paiements')
     serializer_class = FactureSerializer
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -24,6 +28,10 @@ class FactureViewSet(viewsets.ModelViewSet):
 
 
 class PaiementViewSet(viewsets.ModelViewSet):
+    from rest_framework.permissions import IsAuthenticated
+    from accounts.permissions import RoleBasedPermission
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+
     queryset = Paiement.objects.select_related('facture').all()
     serializer_class = PaiementSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
@@ -44,6 +52,10 @@ class PaiementViewSet(viewsets.ModelViewSet):
 
 
 class EntreeCaisseViewSet(viewsets.ModelViewSet):
+    from rest_framework.permissions import IsAuthenticated
+    from accounts.permissions import RoleBasedPermission
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+
     queryset = EntreeCaisse.objects.all()
     serializer_class = EntreeCaisseSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]

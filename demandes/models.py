@@ -56,18 +56,21 @@ class Demande(models.Model):
         (SUR_PLACE, 'Sur place'),
     ]
 
-    # Statuts paiement
     NON_PAYE = 'non_paye'
     ACOMPTE = 'acompte'
     PARTIEL = 'partiel'
     INTEGRAL = 'integral'
     EN_ATTENTE = 'en_attente'
+    INTERVENTION_GRATUITE = 'intervention_gratuite'
+    FACTURATION_ANNULEE = 'facturation_annulee'
     PAIEMENT_STATUT_CHOICES = [
         (NON_PAYE, 'Non payé'),
         (ACOMPTE, 'Acompte versé'),
         (PARTIEL, 'Paiement partiel'),
         (INTEGRAL, 'Payé'),
         (EN_ATTENTE, 'Paiement en attente'),
+        (INTERVENTION_GRATUITE, 'Intervention gratuite'),
+        (FACTURATION_ANNULEE, 'Facturation annulée'),
     ]
 
     # Core fields

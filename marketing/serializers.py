@@ -7,8 +7,8 @@ class PromoCodeSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
 class CommercialGestureSerializer(serializers.ModelSerializer):
-    commercial_name = serializers.CharField(source='cree_par.get_full_name', read_only=True)
-    client_name = serializers.CharField(source='client.get_full_name', read_only=True)
+    commercial_name = serializers.CharField(source='cree_par.full_name', read_only=True)
+    client_name = serializers.CharField(source='client.display_name', read_only=True)
     
     class Meta:
         model = CommercialGesture

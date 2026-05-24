@@ -15,6 +15,11 @@ class ClientViewSet(viewsets.ModelViewSet):
     ordering_fields = ['created_at', 'last_name', 'entity_name']
     ordering = ['-created_at']
 
+    def get_permissions(self):
+        from accounts.permissions import RoleBasedPermission
+        from rest_framework.permissions import IsAuthenticated
+        return [IsAuthenticated(), RoleBasedPermission()]
+
     def get_serializer_class(self):
         if self.action == 'list':
             return ClientListSerializer

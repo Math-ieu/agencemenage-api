@@ -106,9 +106,8 @@ class UserViewSet(viewsets.ModelViewSet):
         return UserSerializer
 
     def get_permissions(self):
-        if self.action in ['list', 'retrieve']:
-            return [IsAuthenticated()]
-        return [IsAuthenticated()]
+        from .permissions import RoleBasedPermission
+        return [IsAuthenticated(), RoleBasedPermission()]
 
     def get_queryset(self):
         qs = super().get_queryset()
