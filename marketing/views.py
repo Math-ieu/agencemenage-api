@@ -140,27 +140,44 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
                         client_phone = instance.demande.client_phone or instance.demande.client_whatsapp
                     
                     if client_phone:
-                        client_name = instance.client.display_name if instance.client else (instance.demande.client_name if instance.demande else "Client")
-                        cree_par = instance.cree_par.full_name if instance.cree_par else "L'équipe"
+                        dem = instance.demande
+                        client_name = instance.client.display_name if instance.client else (dem.client_name if dem else "Client")
+                        demande_service = dem.service if dem else "prestation"
+                        type_prestation = dem.service if dem else "Prestation"
                         
-                        if instance.gesture_type == 'intervention_gratuite':
-                            red_type = "une intervention gratuite (100% de réduction)"
+                        montant_initial = float(instance.montant_ht or 0)
+                        tva_coef = 1.2 if instance.tva_active else 1.0
+                        montant_ttc = montant_initial * tva_coef
+                        
+                        val = float(instance.reduction_value or 0)
+                        
+                        if instance.gesture_type in ['facturation_annulee', 'intervention_gratuite']:
+                            montant_reduction = montant_ttc
+                            taux_reduction = 100.0
                         else:
-                            val = float(instance.reduction_value or 0)
                             if instance.reduction_type == 'pourcentage':
-                                red_type = f"une réduction de {val:.0f}%"
+                                taux_reduction = val
+                                montant_reduction = montant_ttc * (val / 100.0)
                             else:
-                                red_type = f"une réduction de {val:.0f} MAD"
-                        
-                        service_lbl = instance.demande.service if instance.demande else "votre prestation"
-                        motif_lbl = instance.motif or "un geste commercial de notre part"
+                                montant_reduction = val
+                                if montant_ttc > 0:
+                                    taux_reduction = (val / montant_ttc) * 100.0
+                                else:
+                                    taux_reduction = 0.0
+                                    
+                        nouveau_montant = float(instance.total_a_payer or 0)
+                        collaborateur_name = instance.cree_par.full_name if instance.cree_par else "Moussa"
                         
                         vars = [
                             client_name,
-                            red_type,
-                            service_lbl,
-                            motif_lbl,
-                            cree_par
+                            demande_service,
+                            f"{taux_reduction:.0f}",
+                            type_prestation,
+                            f"{montant_ttc:.0f}",
+                            f"{montant_reduction:.0f}",
+                            f"{taux_reduction:.0f}",
+                            f"{nouveau_montant:.0f}",
+                            collaborateur_name
                         ]
                         
                         from demandes.utils.whatsapp import WhatsAppService
