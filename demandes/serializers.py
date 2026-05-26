@@ -54,11 +54,12 @@ class DemandeSerializer(serializers.ModelSerializer):
     regenerer_devis = serializers.BooleanField(write_only=True, required=False, default=False)
     envoyer_whatsapp = serializers.BooleanField(write_only=True, required=False, default=False)
     profils_envoyes = AgentListSerializer(many=True, read_only=True)
+    geste_commercial = serializers.SerializerMethodField()
 
     class Meta:
         model = Demande
         fields = '__all__'
-        extra_fields = ['reste_a_payer']
+        extra_fields = ['reste_a_payer', 'geste_commercial']
 
     def get_field_names(self, declared_fields, info):
         expanded_fields = super(DemandeSerializer, self).get_field_names(declared_fields, info)
@@ -71,6 +72,18 @@ class DemandeSerializer(serializers.ModelSerializer):
 
     def get_nrp_count(self, obj):
         return obj.nrp_logs.count()
+
+    def get_geste_commercial(self, obj):
+        geste = obj.gestes_commerciaux.filter(archived=False).first()
+        if geste:
+            return {
+                'id': geste.id,
+                'gesture_type': geste.gesture_type,
+                'status': geste.status,
+                'reduction_type': geste.reduction_type,
+                'reduction_value': float(geste.reduction_value),
+            }
+        return None
 
     def create(self, validated_data):
         client_name = validated_data.pop('client_name', '').strip()
@@ -318,6 +331,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     annulation_raison = serializers.SerializerMethodField()
     profil_sera_paye = serializers.SerializerMethodField()
     montant_profil_annulation = serializers.SerializerMethodField()
+    geste_commercial = serializers.SerializerMethodField()
 
     class Meta:
         model = Demande
@@ -334,7 +348,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
             'assigned_to_name', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
-            'note_commercial', 'note_operationnel'
+            'note_commercial', 'note_operationnel', 'geste_commercial'
         ]
 
     def _get_facturation_field(self, obj, field, default=None):
@@ -391,6 +405,18 @@ class DemandeListSerializer(serializers.ModelSerializer):
             })
 
         return links
+
+    def get_geste_commercial(self, obj):
+        geste = obj.gestes_commerciaux.filter(archived=False).first()
+        if geste:
+            return {
+                'id': geste.id,
+                'gesture_type': geste.gesture_type,
+                'status': geste.status,
+                'reduction_type': geste.reduction_type,
+                'reduction_value': float(geste.reduction_value),
+            }
+        return None
 
 
 class DemandeHistoriqueSerializer(serializers.ModelSerializer):
