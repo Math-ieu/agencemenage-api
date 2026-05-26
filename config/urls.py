@@ -10,7 +10,7 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 # Import views
-from accounts.views import CustomTokenObtainPairView, CookieTokenRefreshView, LogoutView, UserViewSet, MeView, ChangePasswordView
+from accounts.views import CustomTokenObtainPairView, CookieTokenRefreshView, LogoutView, UserViewSet, MeView, ChangePasswordView, RolePermissionView
 from clients.views import ClientViewSet
 from agents.views import AgentViewSet
 from demandes.views import DemandeViewSet, PublicDemandeCreateView, AuditLogViewSet, DocumentViewSet
@@ -49,6 +49,7 @@ urlpatterns = [
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),
     path('api/auth/me/', MeView.as_view(), name='me'),
     path('api/auth/change-password/', ChangePasswordView.as_view(), name='change_password'),
+    path('api/auth/roles-permissions/', RolePermissionView.as_view(), name='roles_permissions'),
 
     # Public media endpoint — serves files from S3 / Railway bucket
     path('api/media/<path:file_path>/', MediaFileView.as_view(), name='media_file'),

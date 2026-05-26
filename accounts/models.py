@@ -65,3 +65,15 @@ class User(AbstractBaseUser, PermissionsMixin):
     @property
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
+
+
+class RolePermission(models.Model):
+    role = models.CharField(max_length=100, unique=True)
+    permissions = models.JSONField(default=list)
+
+    class Meta:
+        verbose_name = "Permission de Rôle"
+        verbose_name_plural = "Permissions de Rôle"
+
+    def __str__(self):
+        return f"{self.role}"

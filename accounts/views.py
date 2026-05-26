@@ -6,7 +6,7 @@ from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import User
+from .models import User, RolePermission
 from .serializers import UserSerializer, UserCreateSerializer, ChangePasswordSerializer
 
 
@@ -38,6 +38,7 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):
+    permission_classes = [AllowAny]
     serializer_class = CustomTokenObtainPairSerializer
 
     def post(self, request, *args, **kwargs):
@@ -56,6 +57,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 
 class CookieTokenRefreshView(TokenRefreshView):
+    permission_classes = [AllowAny]
+
     def post(self, request, *args, **kwargs):
         refresh_token = request.COOKIES.get('refresh_token')
         if not refresh_token:
@@ -144,3 +147,31 @@ class ChangePasswordView(APIView):
         user.set_password(serializer.validated_data['new_password'])
         user.save()
         return Response({'message': 'Mot de passe modifié avec succès.'})
+
+
+class RolePermissionView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        permissions_dict = {}
+        for rp in RolePermission.objects.all():
+            permissions_dict[rp.role] = rp.permissions
+        return Response(permissions_dict)
+
+    def post(self, request):
+        if request.user.role != 'admin':
+            return Response({"detail": "Seuls les administrateurs peuvent modifier les privilèges."}, status=status.HTTP_403_FORBIDDEN)
+            
+        data = request.data
+        if not isinstance(data, dict):
+            return Response({"detail": "Format de données invalide."}, status=status.HTTP_400_BAD_REQUEST)
+            
+        for role, perms in data.items():
+            if not isinstance(perms, list):
+                continue
+            RolePermission.objects.update_or_create(
+                role=role,
+                defaults={'permissions': perms}
+            )
+            
+        return Response({"message": "Permissions enregistrées avec succès."})
