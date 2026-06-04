@@ -49,9 +49,13 @@ class Demande(models.Model):
     CHEQUE = 'cheque'
     AGENCE = 'agence'
     SUR_PLACE = 'sur_place'
+    ESPECES = 'especes'
+    CARTE = 'carte'
     PAIEMENT_CHOICES = [
-        (VIREMENT, 'Virement'),
+        (VIREMENT, 'Par virement'),
         (CHEQUE, 'Par chèque'),
+        (ESPECES, 'En espèces'),
+        (CARTE, 'Par carte bancaire (solution de paiement en ligne)'),
         (AGENCE, 'À l\'agence'),
         (SUR_PLACE, 'Sur place'),
     ]
