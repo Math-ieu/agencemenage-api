@@ -111,15 +111,23 @@ class AgentViewSet(viewsets.ModelViewSet):
     def by_share(self, request, share_uuid=None):
         """Récupérer un profil via son lien de partage unique."""
         try:
-            share = ProfilShare.objects.select_related('agent', 'demande').get(uuid=share_uuid)
+            share = ProfilShare.objects.select_related(
+                'agent', 'demande', 'demande__client', 'demande__client__assigned_commercial'
+            ).get(uuid=share_uuid)
         except (ProfilShare.DoesNotExist, ValueError):
             return Response({'error': 'Lien invalide ou expiré'}, status=404)
         
         serializer = AgentSerializer(share.agent)
-        # On peut ajouter des infos de contexte (demande) si besoin
         data = serializer.data
         data['demande_context'] = {
             'service': share.demande.service,
             'client_name': share.demande.client.display_name if share.demande.client else 'Inconnu'
         }
+        
+        # Get the commercial's phone number
+        commercial_phone = None
+        if share.demande and share.demande.client and share.demande.client.assigned_commercial:
+            commercial_phone = share.demande.client.assigned_commercial.phone
+            
+        data['commercial_phone'] = commercial_phone
         return Response(data)
