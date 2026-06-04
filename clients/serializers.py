@@ -49,6 +49,8 @@ class ClientListSerializer(serializers.ModelSerializer):
 from .models import ClientActionLog
 
 class ClientActionLogSerializer(serializers.ModelSerializer):
+    user_name = serializers.CharField(source='user.full_name', read_only=True)
+
     class Meta:
         model = ClientActionLog
-        fields = ['id', 'action', 'details', 'created_at']
+        fields = ['id', 'action', 'details', 'user', 'user_name', 'created_at']

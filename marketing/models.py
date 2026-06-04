@@ -121,3 +121,34 @@ class Campaign(models.Model):
 
     def __str__(self):
         return self.title
+
+
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from clients.models import ClientActionLog
+
+@receiver(post_save, sender=CommercialGesture)
+def log_commercial_gesture_creation(sender, instance, created, **kwargs):
+    if created and instance.client:
+        reduction_str = ""
+        if instance.gesture_type == 'reduction_tarif':
+            symbol = "%" if instance.reduction_type == 'pourcentage' else "MAD"
+            val = float(instance.reduction_value)
+            val_str = f"{val:.0f}" if val.is_integer() else f"{val}"
+            reduction_str = f" (réduction de {val_str} {symbol})"
+        elif instance.gesture_type == 'facturation_annulee':
+            reduction_str = " (Facturation annulée)"
+        elif instance.gesture_type == 'intervention_gratuite':
+            reduction_str = " (Intervention gratuite)"
+        
+        # Details of the gesture
+        details_str = f"Motif : {instance.motif or 'Non spécifié'}"
+        if instance.demande:
+            details_str += f" | Demande #{instance.demande.id} ({instance.demande.service})"
+            
+        ClientActionLog.objects.create(
+            client=instance.client,
+            action=f"Geste commercial{reduction_str}",
+            details=details_str,
+            user=instance.cree_par
+        )

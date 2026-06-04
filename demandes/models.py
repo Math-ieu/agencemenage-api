@@ -271,6 +271,7 @@ class ProfilShare(models.Model):
 
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
+from config.middleware import get_current_user
 
 @receiver(pre_save, sender=Demande)
 def log_demande_changes(sender, instance, **kwargs):
@@ -287,6 +288,7 @@ def log_demande_changes(sender, instance, **kwargs):
         return
 
     from clients.models import ClientActionLog
+    current_user = get_current_user()
 
     # Check for changes in facturation
     old_fact = (old_instance.formulaire_data or {}).get('facturation', {}) if isinstance(old_instance.formulaire_data, dict) else {}
@@ -303,6 +305,16 @@ def log_demande_changes(sender, instance, **kwargs):
     old_annule = old_fact.get('facturation_annulee', False)
     new_annule = new_fact.get('facturation_annulee', False)
 
+    paiement_ui_map = {
+        'non_confirme': 'Non confirmé',
+        'paiement_en_attente': 'Paiement en attente',
+        'agence_payee_client': 'Agence payé / Client',
+        'profil_paye_client': 'Profil payé / Client',
+        'paye': 'Payé',
+        'paiement_partiel': 'Paiement partiel',
+        'facturation_annulee': 'Facturation annulée',
+    }
+
     # 1. Facturation annulée
     if new_annule and not old_annule:
         raison = new_fact.get('annulation_raison') or instance.formulaire_data.get('annulation_raison') or 'Non spécifiée'
@@ -318,25 +330,37 @@ def log_demande_changes(sender, instance, **kwargs):
         ClientActionLog.objects.create(
             client=client,
             action="Facturation annulée",
-            details=details_str
+            details=details_str,
+            user=current_user
         )
     # 2. Modification du statut paiement
     elif new_statut_ui != old_statut_ui and new_statut_ui:
+        old_lbl = paiement_ui_map.get(old_statut_ui, old_statut_ui or 'Non défini')
+        new_lbl = paiement_ui_map.get(new_statut_ui, new_statut_ui)
         ClientActionLog.objects.create(
             client=client,
             action="Modification du besoin",
-            details=f"Statut paiement → {new_statut_ui}"
+            details=f"Statut paiement : {old_lbl} → {new_lbl}",
+            user=current_user
         )
     # 3. Modification du statut de la demande
     elif instance.statut != old_instance.statut:
-        statut_map = dict(Demande.STATUT_CHOICES)
-        old_lbl = statut_map.get(old_instance.statut, old_instance.statut)
-        new_lbl = statut_map.get(instance.statut, instance.statut)
+        status_label_map = {
+            'en_attente': 'Nouveau besoin',
+            'en_cours': 'En cours',
+            'annule': 'Annulé',
+            'termine': 'Terminé',
+            'pres_en_cours': 'Prestation en cours',
+            'pres_terminee': 'Prestation terminée',
+        }
+        old_lbl = status_label_map.get(old_instance.statut, old_instance.statut)
+        new_lbl = status_label_map.get(instance.statut, instance.statut)
         
         ClientActionLog.objects.create(
             client=client,
-            action="Modification du besoin",
-            details=f"Statut demande : {old_lbl} → {new_lbl}"
+            action=f"Statut passé à « {new_lbl} »",
+            details=f"Statut demande : {old_lbl} → {new_lbl}",
+            user=current_user
         )
 
 @receiver(post_save, sender=Demande)
@@ -346,6 +370,7 @@ def log_demande_creation(sender, instance, created, **kwargs):
         ClientActionLog.objects.create(
             client=instance.client,
             action="Nouveau besoin créé",
-            details=f"Service : {instance.service} | Tarif : {instance.prix or 'À définir'} MAD"
+            details=f"Service : {instance.service} | Tarif : {instance.prix or 'À définir'} MAD",
+            user=get_current_user()
         )
 

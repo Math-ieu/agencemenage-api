@@ -67,6 +67,7 @@ class ClientActionLog(models.Model):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='action_logs')
     action = models.CharField(max_length=255)
     details = models.TextField(blank=True)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='client_action_logs')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -77,6 +78,7 @@ class ClientActionLog(models.Model):
 
 from django.db.models.signals import pre_save, post_save
 from django.dispatch import receiver
+from config.middleware import get_current_user
 
 @receiver(post_save, sender=Client)
 def log_client_creation(sender, instance, created, **kwargs):
@@ -84,7 +86,8 @@ def log_client_creation(sender, instance, created, **kwargs):
         ClientActionLog.objects.create(
             client=instance,
             action="Création du client",
-            details="Fiche client créée"
+            details="Fiche client créée",
+            user=get_current_user()
         )
 
 @receiver(pre_save, sender=Client)
@@ -102,6 +105,47 @@ def log_client_changes(sender, instance, **kwargs):
         ClientActionLog.objects.create(
             client=instance,
             action=action_name,
-            details=details_str
+            details=details_str,
+            user=get_current_user()
+        )
+
+    # Track changes to standard client fields
+    fields_to_track = {
+        'first_name': 'Prénom',
+        'last_name': 'Nom',
+        'entity_name': 'Nom entreprise',
+        'email': 'Email',
+        'phone': 'Téléphone',
+        'whatsapp': 'WhatsApp',
+        'segment': 'Segment',
+        'city': 'Ville',
+        'neighborhood': 'Quartier',
+        'address': 'Adresse',
+    }
+    
+    changes = []
+    for field, label in fields_to_track.items():
+        old_val = getattr(old_instance, field, None)
+        new_val = getattr(instance, field, None)
+        
+        old_str = str(old_val or '').strip()
+        new_str = str(new_val or '').strip()
+        
+        if old_str != new_str:
+            if field == 'segment':
+                old_str = 'Particulier' if old_str == 'particulier' else 'Entreprise' if old_str == 'entreprise' else old_str
+                new_str = 'Particulier' if new_str == 'particulier' else 'Entreprise' if new_str == 'entreprise' else new_str
+                
+            old_display = old_str if old_str else "[Vide]"
+            new_display = new_str if new_str else "[Vide]"
+            changes.append(f"{label} : {old_display} → {new_display}")
+            
+    if changes:
+        details_str = " | ".join(changes)
+        ClientActionLog.objects.create(
+            client=instance,
+            action="Informations modifiées",
+            details=details_str,
+            user=get_current_user()
         )
 
