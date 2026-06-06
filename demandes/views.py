@@ -151,6 +151,72 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return self.get_paginated_response(serializer.data)
         return Response(serializer.data)
 
+    @action(detail=False, methods=['get'], url_path='export_csv')
+    def export_csv(self, request):
+        """Exporte l'historique complet en CSV en respectant les filtres de recherche/date."""
+        import csv
+        from django.http import HttpResponse
+
+        queryset = Demande.objects.select_related('client').prefetch_related('profils_envoyes').order_by('-created_at')
+
+        search = (request.query_params.get('search') or '').strip()
+        if search:
+            query = (
+                Q(client__first_name__icontains=search)
+                | Q(client__last_name__icontains=search)
+                | Q(client__entity_name__icontains=search)
+                | Q(service__icontains=search)
+            )
+            search_ref = search.lstrip('#').strip()
+            if search_ref.isdigit():
+                query |= Q(id=int(search_ref))
+            queryset = queryset.filter(query)
+
+        date_value = (request.query_params.get('date') or '').strip()
+        if date_value:
+            queryset = queryset.filter(created_at__date=date_value)
+
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response['Content-Disposition'] = 'attachment; filename="historique_demandes.csv"'
+        response.write('\ufeff')  # BOM for Excel
+
+        writer = csv.writer(response, delimiter=';')
+        writer.writerow([
+            'Réf',
+            'Date création',
+            'Nom client',
+            'Type de service',
+            'Segment',
+            'Profil',
+            'Statut besoin',
+            'Statut paiement',
+            'Motif',
+        ])
+
+        statut_display_map = dict(Demande.STATUT_CHOICES)
+        paiement_display_map = dict(Demande.PAIEMENT_STATUT_CHOICES)
+        segment_display_map = dict(Demande.SEGMENT_CHOICES)
+
+        for d in queryset:
+            client_name = d.client.display_name if d.client else ''
+            profile = d.profils_envoyes.order_by('id').first()
+            profil_name = profile.full_name if profile else ''
+            motif = d.avis_annulation if d.statut == Demande.ANNULE else ''
+
+            writer.writerow([
+                f'#{d.id}',
+                d.created_at.strftime('%d/%m/%Y') if d.created_at else '',
+                client_name,
+                d.service or '',
+                segment_display_map.get(d.segment, d.segment or ''),
+                profil_name,
+                statut_display_map.get(d.statut, d.statut or ''),
+                paiement_display_map.get(d.statut_paiement, d.statut_paiement or ''),
+                motif,
+            ])
+
+        return response
+
     @action(detail=False, methods=['get'])
     def notifications_urgentes(self, request):
         from django.utils import timezone
