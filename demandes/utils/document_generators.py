@@ -10,6 +10,8 @@ from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
 from reportlab.lib.units import mm
 from reportlab.pdfgen import canvas
+from reportlab.platypus import Paragraph
+from reportlab.lib.styles import ParagraphStyle
 
 couleur_principale = "#0F8A7D"
  
@@ -122,9 +124,15 @@ def generate_devis_pdf(data: dict) -> bytes:
     rows = [
         ("Type de service",       str(data.get("service_type", ""))),
         ("Segment",               str(data.get("segment", ""))),
+    ]
+    if data.get("surface"):
+        rows.append(("Surface", f"{data.get('surface')} m²"))
+    if data.get("duree"):
+        rows.append(("Durée", f"{data.get('duree')} {data.get('duration_unit', 'heures')}"))
+    rows.extend([
         ("Nombre d'intervenants", str(data.get("intervenants", ""))),
         ("Fréquence",             str(data.get("frequence", ""))),
-    ]
+    ])
  
     row_h = 9 * mm
     for i, (label, value) in enumerate(rows):
@@ -142,24 +150,122 @@ def generate_devis_pdf(data: dict) -> bytes:
     total_w = content_w / 2
     total_x = margin + content_w / 2
  
-    teal_rect(total_x, total_y - 12 * mm, total_w, 12 * mm)
-    c.setFillColor(WHITE)
-    c.setFont("Helvetica-Bold", 14)
-    total_str = f"Total: {data.get('total', '')} MAD"
-    c.drawCentredString(total_x + total_w / 2, total_y - 8 * mm, total_str)
- 
-    # ── FOOTER ────────────────────────────────────────────────────────────────
+    tva_active = data.get('tva_active', True)
+    is_autre_service = data.get('is_autre_service', False)
+    
+    if is_autre_service:
+        try:
+            total_ht = float(data.get('total', 0))
+        except Exception:
+            total_ht = 0.0
+            
+        if tva_active:
+            tva_val = total_ht * 0.2
+            total_ttc = total_ht + tva_val
+            
+            box_h = 24 * mm
+            light_rect(total_x, total_y - box_h, total_w, box_h)
+            
+            c.setFillColor(DARK_TEXT)
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(total_x + 4 * mm, total_y - 6 * mm, "Total HT:")
+            c.drawRightString(total_x + total_w - 4 * mm, total_y - 6 * mm, f"{total_ht:.2f} MAD")
+            
+            c.drawString(total_x + 4 * mm, total_y - 13 * mm, "TVA (20%):")
+            c.drawRightString(total_x + total_w - 4 * mm, total_y - 13 * mm, f"{tva_val:.2f} MAD")
+            
+            teal_rect(total_x, total_y - box_h, total_w, 8 * mm)
+            c.setFillColor(WHITE)
+            c.setFont("Helvetica-Bold", 11)
+            c.drawString(total_x + 4 * mm, total_y - box_h + 2.5 * mm, "Total TTC:")
+            c.drawRightString(total_x + total_w - 4 * mm, total_y - box_h + 2.5 * mm, f"{total_ttc:.2f} MAD")
+            total_offset_y = box_h
+        else:
+            box_h = 16 * mm
+            light_rect(total_x, total_y - box_h, total_w, box_h)
+            
+            c.setFillColor(DARK_TEXT)
+            c.setFont("Helvetica-Bold", 10)
+            c.drawString(total_x + 4 * mm, total_y - 6 * mm, "Total HT:")
+            c.drawRightString(total_x + total_w - 4 * mm, total_y - 6 * mm, f"{total_ht:.2f} MAD")
+            
+            c.setFont("Helvetica-Oblique", 9)
+            c.setFillColor(colors.HexColor("#6b7280"))
+            c.drawString(total_x + 4 * mm, total_y - 12 * mm, "Exonéré de TVA")
+            total_offset_y = box_h
+    else:
+        teal_rect(total_x, total_y - 12 * mm, total_w, 12 * mm)
+        c.setFillColor(WHITE)
+        c.setFont("Helvetica-Bold", 14)
+        total_str = f"Total: {data.get('total', '')} MAD"
+        c.drawCentredString(total_x + total_w / 2, total_y - 8 * mm, total_str)
+        total_offset_y = 12 * mm
+
+    # ── FOOTER HELPER ─────────────────────────────────────────────────────────
     footer_y = 15 * mm
-    c.setStrokeColor(colors.HexColor("#cccccc"))
-    c.line(margin, footer_y + 6 * mm, page_w - margin, footer_y + 6 * mm)
+    def draw_footer():
+        c.setStrokeColor(colors.HexColor("#cccccc"))
+        c.setLineWidth(0.2)
+        c.line(margin, footer_y + 6 * mm, page_w - margin, footer_y + 6 * mm)
+        c.setFillColor(colors.HexColor("#888888"))
+        c.setFont("Helvetica", 8)
+        c.drawString(margin, footer_y + 2 * mm,
+                     "Agence Ménage — ICE: 00XXXXXXXXXX    www.agencemenage.ma")
+        c.drawString(margin, footer_y - 2 * mm,
+                     "Ce devis est valable 30 jours à compter de sa date d'émission.")
+
+    # ── CONSIGNES IMPORTANTES (contractual description) ──────────────────────────
+    desc_text = data.get('description', '')
+    if desc_text:
+        desc_y = total_y - total_offset_y - 8 * mm
+        
+        # Check for page break if we are too low
+        if desc_y < 45 * mm:
+            draw_footer()
+            c.showPage()
+            # Redraw header band on new page
+            teal_rect(0, page_h - header_h, page_w, header_h)
+            c.setFillColor(WHITE)
+            c.setFont("Helvetica-Bold", 22)
+            c.drawString(margin, page_h - 16 * mm, "Agence Ménage")
+            c.setFont("Helvetica", 10)
+            c.drawString(margin, page_h - 23 * mm, "Casablanca, Maroc")
+            desc_y = page_h - header_h - 15 * mm
+            
+        c.setFillColor(TEAL)
+        c.setFont("Helvetica-Bold", 11)
+        c.drawString(margin, desc_y, "Consignes importantes & Conditions de la prestation")
+        
+        c.setStrokeColor(colors.HexColor("#cbd5e1"))
+        c.setLineWidth(0.5)
+        c.line(margin, desc_y - 2.5 * mm, RIGHT, desc_y - 2.5 * mm)
+        
+        style = ParagraphStyle(
+            name='ContractualDesc',
+            fontName='Helvetica',
+            fontSize=9.5,
+            leading=13.5,
+            textColor=DARK_TEXT
+        )
+        
+        formatted_desc = desc_text.replace('\n', '<br/>')
+        p = Paragraph(formatted_desc, style)
+        
+        max_w = content_w - 6 * mm
+        p_w, p_h = p.wrap(max_w, 150 * mm)
+        
+        box_y = desc_y - 5 * mm - p_h
+        
+        # Draw light background box for the description
+        c.setFillColor(colors.HexColor("#f8fafc"))
+        c.setStrokeColor(colors.HexColor("#0f766e"))
+        c.setLineWidth(0.8)
+        c.roundRect(margin, box_y, content_w, p_h + 5 * mm, 3 * mm, fill=1, stroke=1)
+        
+        p.drawOn(c, margin + 3 * mm, box_y + 2.5 * mm)
  
-    c.setFillColor(colors.HexColor("#888888"))
-    c.setFont("Helvetica", 8)
-    c.drawString(margin, footer_y + 2 * mm,
-                 "Agence Ménage — ICE: 00XXXXXXXXXX    www.agencemenage.ma")
-    c.drawString(margin, footer_y - 2 * mm,
-                 "Ce devis est valable 30 jours à compter de sa date d'émission.")
- 
+    # Draw footer on the current (last) page
+    draw_footer()
     c.save()
     buffer.seek(0)
     return buffer.read()

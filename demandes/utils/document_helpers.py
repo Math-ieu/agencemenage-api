@@ -59,6 +59,10 @@ def generate_demande_document(demande, doc_type, user=None):
         'duree': form_data.get('duree', ''),
         'ville': form_data.get('ville', ''),
         'quartier': form_data.get('quartier', ''),
+        'description': form_data.get('description', ''),
+        'is_autre_service': form_data.get('is_autre_service', False),
+        'duration_unit': form_data.get('duration_unit', 'heures'),
+        'tva_active': form_data.get('tva_active', True),
     }
 
     if doc_type == 'devis':
