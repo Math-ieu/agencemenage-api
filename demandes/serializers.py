@@ -61,6 +61,31 @@ class DemandeSerializer(serializers.ModelSerializer):
         fields = '__all__'
         extra_fields = ['reste_a_payer', 'geste_commercial']
 
+    def validate(self, attrs):
+        statut = attrs.get('statut')
+        if not statut and self.instance:
+            statut = self.instance.statut
+
+        statut_paiement = attrs.get('statut_paiement')
+        if not statut_paiement and self.instance:
+            statut_paiement = self.instance.statut_paiement
+
+        form_data = attrs.get('formulaire_data')
+        if form_data is None and self.instance:
+            form_data = self.instance.formulaire_data or {}
+
+        facturation = form_data.get('facturation', {}) if isinstance(form_data, dict) else {}
+        statut_paiement_ui = facturation.get('statut_paiement_ui')
+
+        is_paying = (statut_paiement == Demande.INTEGRAL) or (statut_paiement_ui == 'paye')
+
+        if is_paying and statut != Demande.PRES_TERMINEE:
+            raise serializers.ValidationError(
+                "Le statut 'Payé' ne doit être accessible que si le besoin est préalablement passé au statut 'Prestation terminée'."
+            )
+
+        return attrs
+
     def get_field_names(self, declared_fields, info):
         expanded_fields = super(DemandeSerializer, self).get_field_names(declared_fields, info)
         if getattr(self.Meta, 'extra_fields', None):
