@@ -1,13 +1,24 @@
 from django.conf import settings
-from rest_framework import viewsets, status
+from rest_framework import viewsets, status, serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.permissions import AllowAny, IsAuthenticated
 from rest_framework_simplejwt.exceptions import InvalidToken
 from rest_framework_simplejwt.views import TokenObtainPairView, TokenRefreshView
-from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
-from .models import User, RolePermission
-from .serializers import UserSerializer, UserCreateSerializer, ChangePasswordSerializer
+from django.contrib.auth import authenticate
+from rest_framework_simplejwt.tokens import RefreshToken
+from django.contrib.auth.tokens import default_token_generator
+from django.utils.http import urlsafe_base64_encode, urlsafe_base64_decode
+from django.utils.encoding import force_bytes, force_str
+from django.db.models import Q
+import random
+
+from .models import User, RolePermission, PasswordResetCode
+from .serializers import (
+    UserSerializer, UserCreateSerializer, ChangePasswordSerializer,
+    ForgotPasswordSerializer, ResetPasswordSerializer
+)
+from .emails import send_password_reset_email
 
 
 def set_jwt_cookies(response, access_token=None, refresh_token=None):
@@ -30,10 +41,34 @@ def set_jwt_cookies(response, access_token=None, refresh_token=None):
             samesite=getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax')
         )
 
-class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
+class CustomTokenObtainPairSerializer(serializers.Serializer):
+    email = serializers.CharField(required=False, allow_blank=True)
+    username = serializers.CharField(required=False, allow_blank=True)
+    login = serializers.CharField(required=False, allow_blank=True)
+    password = serializers.CharField(write_only=True)
+
     def validate(self, attrs):
-        data = super().validate(attrs)
-        data['user'] = UserSerializer(self.user).data
+        login_val = attrs.get('email') or attrs.get('username') or attrs.get('login')
+        password = attrs.get('password')
+
+        if not login_val:
+            raise serializers.ValidationError("L'adresse e-mail ou le nom d'utilisateur est requis.")
+
+        self.user = authenticate(username=login_val, password=password)
+
+        if not self.user:
+            raise serializers.ValidationError("Aucun compte actif trouvé avec ces identifiants.")
+
+        if not self.user.is_active:
+            raise serializers.ValidationError("Ce compte est inactif.")
+
+        refresh = RefreshToken.for_user(self.user)
+
+        data = {
+            'refresh': str(refresh),
+            'access': str(refresh.access_token),
+            'user': UserSerializer(self.user).data
+        }
         return data
 
 
@@ -175,3 +210,74 @@ class RolePermissionView(APIView):
             )
             
         return Response({"message": "Permissions enregistrées avec succès."})
+
+
+class ForgotPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ForgotPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        login_val = serializer.validated_data['login']
+
+        # Find user by email or username case-insensitively
+        user = User.objects.filter(Q(email__iexact=login_val) | Q(username__iexact=login_val)).first()
+
+        if user:
+            # Generate OTP code (6 digits)
+            otp_code = f"{random.randint(100000, 999999)}"
+            # Delete/invalidate any previous codes for this user
+            PasswordResetCode.objects.filter(user=user).update(is_used=True)
+            # Create new reset code
+            PasswordResetCode.objects.create(user=user, code=otp_code)
+
+            # Send email
+            try:
+                send_password_reset_email(user, otp_code)
+            except Exception as e:
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.error(f"Failed to send password reset email: {str(e)}")
+
+        # Always return success to prevent user enumeration attacks
+        return Response(
+            {"message": "Si le compte existe, un e-mail contenant les instructions de récupération a été envoyé."},
+            status=status.HTTP_200_OK
+        )
+
+
+class ResetPasswordView(APIView):
+    permission_classes = [AllowAny]
+
+    def post(self, request):
+        serializer = ResetPasswordSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        new_password = serializer.validated_data['new_password']
+        login_val = serializer.validated_data['login']
+        code = serializer.validated_data['code']
+
+        user = User.objects.filter(Q(email__iexact=login_val) | Q(username__iexact=login_val)).first()
+        if not user:
+            return Response(
+                {"error": "Code de réinitialisation invalide ou expiré."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        reset_code = PasswordResetCode.objects.filter(user=user, code=code, is_used=False).first()
+        if not reset_code or not reset_code.is_valid():
+            return Response(
+                {"error": "Code de réinitialisation invalide ou expiré."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Mark code as used
+        reset_code.is_used = True
+        reset_code.save()
+
+        user.set_password(new_password)
+        user.save()
+        
+        return Response(
+            {"message": "Votre mot de passe a été réinitialisé avec succès."},
+            status=status.HTTP_200_OK
+        )

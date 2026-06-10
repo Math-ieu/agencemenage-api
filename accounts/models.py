@@ -39,6 +39,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     ]
 
     email = models.EmailField(unique=True)
+    username = models.CharField(max_length=150, unique=True, null=True, blank=True)
     first_name = models.CharField(max_length=100, blank=True, default='')
     last_name = models.CharField(max_length=100, blank=True, default='')
     role = models.CharField(max_length=30, choices=ROLE_CHOICES, default=COMMERCIAL)
@@ -66,6 +67,25 @@ class User(AbstractBaseUser, PermissionsMixin):
     def full_name(self):
         return f"{self.first_name} {self.last_name}".strip()
 
+    def save(self, *args, **kwargs):
+        if not self.username:
+            # Generate unique username from email
+            base_username = self.email.split('@')[0] if self.email else "user"
+            import re
+            base_username = re.sub(r'[^a-zA-Z0-9_]', '', base_username)
+            if not base_username:
+                base_username = "user"
+            username = base_username
+            counter = 1
+            qs = self.__class__.objects.all()
+            if self.pk:
+                qs = qs.exclude(pk=self.pk)
+            while qs.filter(username__iexact=username).exists():
+                username = f"{base_username}{counter}"
+                counter += 1
+            self.username = username
+        super().save(*args, **kwargs)
+
 
 class RolePermission(models.Model):
     role = models.CharField(max_length=100, unique=True)
@@ -77,3 +97,24 @@ class RolePermission(models.Model):
 
     def __str__(self):
         return f"{self.role}"
+
+
+class PasswordResetCode(models.Model):
+    user = models.ForeignKey(User, on_delete=models.CASCADE, related_name='reset_codes')
+    code = models.CharField(max_length=6)
+    created_at = models.DateTimeField(auto_now_add=True)
+    is_used = models.BooleanField(default=False)
+
+    class Meta:
+        verbose_name = "Code de réinitialisation"
+        verbose_name_plural = "Codes de réinitialisation"
+        ordering = ['-created_at']
+
+    def is_valid(self):
+        from django.utils import timezone
+        from datetime import timedelta
+        # Code valid for 15 minutes
+        return not self.is_used and timezone.now() < self.created_at + timedelta(minutes=15)
+
+    def __str__(self):
+        return f"Reset code for {self.user.email} (valid: {self.is_valid()})"

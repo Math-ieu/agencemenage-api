@@ -201,3 +201,12 @@ SPECTACULAR_SETTINGS = {
 D360_API_KEY = config('D360_API_KEY', default='')
 API_BASE_URL = config('API_BASE_URL', default='http://localhost:8000').rstrip('/')
 D360_API_URL = config('D360_API_URL', default='https://waba-v2.360dialog.io/messages')
+
+# ─── Resend & Frontend settings ──────────────────────────────────────────
+RESEND_API_KEY = config('RESEND_API_KEY', default=None)
+FRONTEND_URL = config('FRONTEND_URL', default='https://app.agencemenage.ma').rstrip('/')
+
+AUTHENTICATION_BACKENDS = [
+    'accounts.backends.EmailOrUsernameModelBackend',
+    'django.contrib.auth.backends.ModelBackend',
+]
