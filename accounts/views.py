@@ -194,8 +194,23 @@ class RolePermissionView(APIView):
         return Response(permissions_dict)
 
     def post(self, request):
-        if request.user.role != 'admin':
-            return Response({"detail": "Seuls les administrateurs peuvent modifier les privilèges."}, status=status.HTTP_403_FORBIDDEN)
+        user = request.user
+        allowed = False
+        if user.role == 'admin':
+            allowed = True
+        else:
+            from accounts.permissions import map_role_to_db_key
+            db_role = map_role_to_db_key(user.role)
+            try:
+                rp = RolePermission.objects.filter(role=db_role).first()
+                permissions_list = rp.permissions if rp else []
+            except Exception:
+                permissions_list = []
+            if 'parametres_globaux' in permissions_list:
+                allowed = True
+                
+        if not allowed:
+            return Response({"detail": "Seuls les administrateurs ou les utilisateurs disposant du privilège parametres_globaux peuvent modifier les privilèges."}, status=status.HTTP_403_FORBIDDEN)
             
         data = request.data
         if not isinstance(data, dict):

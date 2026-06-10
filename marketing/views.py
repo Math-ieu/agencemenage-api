@@ -16,11 +16,7 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
     permission_classes = [IsAuthenticated, RoleBasedPermission]
     
     def get_queryset(self):
-        queryset = super().get_queryset().select_related('client', 'cree_par', 'demande')
-        user = self.request.user
-        if user.is_authenticated and user.role == 'commercial' and not user.is_staff:
-            return queryset.filter(cree_par=user)
-        return queryset
+        return super().get_queryset().select_related('client', 'cree_par', 'demande')
 
     def perform_create(self, serializer):
         cree_par = serializer.validated_data.get('cree_par') or self.request.user

@@ -41,11 +41,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), RoleBasedPermission()]
     
     def get_queryset(self):
-        queryset = super().get_queryset()
-        user = self.request.user
-        if user.is_authenticated and user.role == 'commercial' and not user.is_staff:
-            return queryset.filter(assigned_to=user)
-        return queryset
+        return super().get_queryset()
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -915,9 +911,14 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
         if user.is_staff or user.role == 'admin':
             return AppNotification.objects.all()
             
-        return AppNotification.objects.filter(
-            Q(target_roles__contains=user.role) | Q(target_roles=[]) | Q(target_roles__isnull=True)
-        )
+        notifications = AppNotification.objects.only('id', 'target_roles')
+        allowed_ids = []
+        for n in notifications:
+            roles = n.target_roles
+            # If target_roles is empty or contains the user's role (check case-insensitively or exact)
+            if not roles or any(str(r).lower() == str(user.role).lower() for r in roles):
+                allowed_ids.append(n.id)
+        return AppNotification.objects.filter(id__in=allowed_ids)
 
     def list(self, request, *args, **kwargs):
         queryset = self.filter_queryset(self.get_queryset())

@@ -1,5 +1,25 @@
 from rest_framework import permissions
 
+def map_role_to_db_key(role):
+    if not role:
+        return ''
+    r = role.lower().strip()
+    if r == 'admin':
+        return 'Admin'
+    if r in ['moderateur', 'modérateur']:
+        return 'Moderateur'
+    if r in ['responsable commercial', 'responsable_commercial']:
+        return 'Responsable commercial'
+    if r == 'commercial':
+        return 'commercial'
+    if r in ['responsable des opérations', 'responsable_operations']:
+        return 'Responsable des Opérations'
+    if r in ['chargée des opérations', 'charge_operations']:
+        return 'Chargée des Opérations'
+    if r in ['opérationnel', 'operationnel']:
+        return 'Opérationnel'
+    return role
+
 class RoleBasedPermission(permissions.BasePermission):
     message = "Vous n'avez pas l'autorisation d'effectuer cette action."
 
@@ -14,136 +34,159 @@ class RoleBasedPermission(permissions.BasePermission):
         if role == 'admin':
             return True
             
-        action = view.action
+        action = getattr(view, 'action', None)
+        if not action:
+            method = request.method.upper()
+            if method in ['GET', 'HEAD', 'OPTIONS']:
+                action = 'list'
+            elif method == 'POST':
+                action = 'create'
+            elif method in ['PUT', 'PATCH']:
+                action = 'update'
+            elif method == 'DELETE':
+                action = 'destroy'
+                
         view_name = view.__class__.__name__
+
+        # Récupérer les permissions de la base de données
+        from accounts.models import RolePermission
+        db_role = map_role_to_db_key(role)
+        try:
+            rp = RolePermission.objects.filter(role=db_role).first()
+            permissions_list = rp.permissions if rp else []
+        except Exception:
+            permissions_list = []
+
+        def has_perm(perm_key):
+            return perm_key in permissions_list
 
         # 2. Gestion des utilisateurs (UserViewSet)
         if view_name == 'UserViewSet':
-            # Seul l'admin et le modérateur (création uniquement) ont accès
-            if role == 'moderateur' and action == 'create':
-                return True
-            self.message = "Accès refusé. Seul un administrateur peut gérer les comptes utilisateurs (Modérateur peut créer)."
+            if action == 'create':
+                return has_perm('creer_utilisateurs') or has_perm('parametres_globaux')
+            elif action in ['list', 'retrieve']:
+                return (
+                    has_perm('consulter_utilisateurs') or
+                    has_perm('parametres_globaux') or
+                    has_perm('affecter_commercial') or
+                    has_perm('creer_geste_commercial')
+                )
+            elif action in ['update', 'partial_update']:
+                return has_perm('activer_desactiver_utilisateurs') or has_perm('parametres_globaux')
+            elif action == 'destroy':
+                return has_perm('parametres_globaux')
             return False
 
         # 3. Gestion des clients (ClientViewSet)
         if view_name == 'ClientViewSet':
-            # Supprimer/Blacklister
-            if action in ['destroy', 'blacklist']:
-                self.message = "Action non autorisée. Seul un administrateur est autorisé à supprimer ou blacklister un client."
-                return False
+            if action == 'destroy':
+                return has_perm('delete_client')
+            
+            if action in ['update', 'partial_update']:
+                is_blacklisting = 'is_blacklisted' in request.data
+                if is_blacklisting:
+                    return has_perm('blacklister_clients')
+                return has_perm('modifier_clients')
                 
-            # Modifier / Créer
-            if action in ['create', 'update', 'partial_update']:
-                if role in ['commercial', 'charge_operations']:
-                    # Le commercial peut uniquement éditer ses propres clients (vérifié au niveau de l'objet)
-                    if role == 'commercial' and action in ['update', 'partial_update']:
-                        return True
-                    self.message = f"Les utilisateurs avec le rôle '{role}' n'ont pas l'autorisation de créer ou modifier les fiches clients génériques."
-                    return False
-                    
-            # Affectation à un commercial (Custom actions on clients/demands)
+            if action == 'create':
+                return has_perm('modifier_clients')
+                
             if action == 'affecter':
-                if role not in ['responsable_commercial', 'responsable_operations']:
-                    self.message = "Seul un responsable commercial ou responsable des opérations peut affecter un client."
-                    return False
+                return has_perm('affectation_client') or has_perm('affecter_commercial')
+                
+            if action in ['list', 'retrieve']:
+                return has_perm('consulter_clients')
 
         # 4. Gestion des profils candidats (AgentViewSet)
         if view_name == 'AgentViewSet':
-            # Supprimer un profil
             if action == 'destroy':
-                self.message = "Action non autorisée. Seul un administrateur peut supprimer un profil candidat."
-                return False
+                return has_perm('supprimer_profil')
                 
-            # Blacklister un profil candidate (Admin et Responsable des opérations)
-            if action == 'blacklist':
-                if role not in ['responsable_operations']:
-                    self.message = "Action non autorisée. Seul un administrateur ou responsable des opérations peut blacklister un profil."
-                    return False
-
-            # Créer / Modifier
-            if action in ['create', 'update', 'partial_update']:
-                if role == 'commercial':
-                    self.message = "Les commerciaux ont un accès en lecture seule aux fiches candidats."
-                    return False
+            if action in ['update', 'partial_update']:
+                is_blacklisting = 'is_blacklisted' in request.data
+                if is_blacklisting:
+                    return has_perm('blacklister_agents')
+                return has_perm('modifier_agents')
+                
+            if action == 'create':
+                return has_perm('creer_agents')
+                
+            if action in ['list', 'retrieve']:
+                return has_perm('consulter_agents')
 
         # 5. Gestion des demandes (DemandeViewSet)
         if view_name == 'DemandeViewSet':
-            # Annuler la facturation / Geste commercial (Remise/Remboursement/Annulation)
-            if action in ['annuler_facturation', 'appliquer_geste', 'geste_commercial']:
-                if role not in ['responsable_commercial', 'responsable_operations']:
-                    self.message = "Seul un administrateur, responsable commercial ou responsable des opérations peut annuler une facturation, effectuer un remboursement ou accorder un geste commercial."
-                    return False
-
-            # Valider / Planifier (CAO)
+            if action == 'destroy':
+                return has_perm('supprimer_demande_dashboard')
+                
             if action in ['valider', 'confirmer_cao']:
-                if role not in ['responsable_operations', 'charge_operations', 'responsable_commercial']:
-                    self.message = "Seul un administrateur, un responsable ou une chargée des opérations peut valider ou planifier une demande (CAO)."
-                    return False
-
-            # Modifier demande
+                return has_perm('valider_demandes')
+                
+            if action == 'annuler':
+                return has_perm('refuser_demande') or has_perm('annulation_demande')
+                
+            if action == 'nrp':
+                return has_perm('consulter_demandes') or has_perm('modifier_demande')
+                
+            if action == 'affecter':
+                return has_perm('affecter_commercial')
+                
+            if action == 'annuler_facturation':
+                return has_perm('facturation_annulee')
+                
+            if action in ['appliquer_geste', 'geste_commercial']:
+                return has_perm('creer_geste_commercial') or has_perm('geste_commercial')
+                
+            if action == 'create':
+                return has_perm('creer_demande')
+                
             if action in ['update', 'partial_update']:
-                if role == 'charge_operations':
-                    self.message = "Les chargées des opérations ont un accès en lecture seule aux détails des clients et demandes."
-                    return False
+                return has_perm('modifier_demande')
+                
+            if action in ['list', 'retrieve']:
+                return has_perm('consulter_demandes') or has_perm('consulter_dashboard')
 
         # 6. Gestion financière (FactureViewSet, PaiementViewSet, EntreeCaisseViewSet)
         if view_name in ['FactureViewSet', 'PaiementViewSet', 'EntreeCaisseViewSet']:
-            # Responsable commercial, Commercial, Responsable des Opérations ont accès
-            if role not in ['responsable_commercial', 'commercial', 'responsable_operations']:
-                self.message = "Accès refusé. Vous n'avez pas l'autorisation d'accéder ou de modifier la gestion financière."
-                return False
-            # Les remises, remboursements et annulations
             if action in ['refund', 'cancel', 'annuler', 'remise']:
-                if role == 'commercial':
-                    self.message = "Les commerciaux ne peuvent pas initier de remises, remboursements ou annulations financières."
-                    return False
+                return has_perm('mouvements_caisse')
+            if action in ['create', 'update', 'partial_update']:
+                return has_perm('modifier_facture') or has_perm('editer_facture') or has_perm('mouvements_caisse')
+            if action in ['list', 'retrieve']:
+                return has_perm('consulter_factures') or has_perm('voir_la_caisse') or has_perm('mouvements_caisse')
 
         # 7. Retours clients / Feedback (FeedbackViewSet)
         if view_name == 'FeedbackViewSet':
-            # Responsable des opérations a accès à tout
-            if role == 'charge_operations':
-                # La chargée d'opérations a uniquement accès à ses propres feedbacks (filtré dans get_queryset)
-                return True
-            if role not in ['responsable_operations', 'responsable_commercial']:
-                self.message = "Accès refusé aux retours clients."
-                return False
+            if action in ['list', 'retrieve']:
+                return has_perm('consulter_retours_qualite')
+            return has_perm('repondre_avis_clients') or has_perm('moderer_masquer_avis')
+
+        # 8. Marketing (PromoCodeViewSet, CommercialGestureViewSet, CampaignViewSet)
+        if view_name == 'PromoCodeViewSet':
+            if action == 'create':
+                return has_perm('creer_code_promo')
+            elif action in ['update', 'partial_update', 'destroy']:
+                return has_perm('creer_code_promo')
+            elif action in ['list', 'retrieve']:
+                return has_perm('consulter_marketing')
+                
+        if view_name == 'CommercialGestureViewSet':
+            if action == 'create':
+                return has_perm('creer_geste_commercial')
+            elif action in ['update', 'partial_update', 'destroy']:
+                return has_perm('creer_geste_commercial')
+            elif action in ['list', 'retrieve']:
+                return has_perm('consulter_marketing')
+                
+        if view_name == 'CampaignViewSet':
+            if action == 'create':
+                return has_perm('creer_campagne')
+            elif action in ['update', 'partial_update', 'destroy']:
+                return has_perm('creer_campagne')
+            elif action in ['list', 'retrieve']:
+                return has_perm('consulter_marketing')
 
         return True
 
     def has_object_permission(self, request, view, obj):
-        user = request.user
-        role = user.role
-        
-        if role == 'admin':
-            return True
-
-        action = view.action
-        view_name = view.__class__.__name__
-
-        # 1. Commercial - modifier uniquement ses propres clients
-        if view_name == 'ClientViewSet':
-            if action in ['update', 'partial_update']:
-                if role == 'commercial':
-                    # vérifie si une demande du client est affectée à ce commercial
-                    has_assigned = obj.demandes.filter(assigned_to=user).exists()
-                    if not has_assigned:
-                        self.message = "Action non autorisée. Vous pouvez uniquement éditer vos propres clients attribués."
-                        return False
-
-        # 2. Commercial - modifier uniquement ses propres demandes
-        if view_name == 'DemandeViewSet':
-            if action in ['update', 'partial_update']:
-                if role == 'commercial':
-                    if obj.assigned_to != user:
-                        self.message = "Action non autorisée. Vous pouvez uniquement modifier vos propres demandes."
-                        return False
-
-        # 3. Chargée des opérations - retour qualité de ses propres clients
-        if view_name == 'FeedbackViewSet':
-            if role == 'charge_operations':
-                # vérifie si la demande associée est attribuée ou liée à ses clients
-                if obj.demande and obj.demande.assigned_to != user:
-                    self.message = "Accès refusé. Vous pouvez uniquement consulter les feedbacks de vos propres dossiers clients."
-                    return False
-
         return True
