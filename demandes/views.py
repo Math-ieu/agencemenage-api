@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404
 from django.db.models import Model
 from django.db.models import Q
-from .models import Demande, NRPLog, Document, AuditLog, ProfilShare
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification
 from .utils.document_generators import generate_devis_pdf, generate_recap_png
 import datetime
 import mimetypes
@@ -18,7 +18,8 @@ from .utils.whatsapp import WhatsAppService
 from .serializers import (
     DemandeSerializer, DemandeListSerializer,
     NRPLogSerializer, DocumentSerializer,
-    PublicDemandeCreateSerializer, AuditLogSerializer, DemandeHistoriqueSerializer
+    PublicDemandeCreateSerializer, AuditLogSerializer, DemandeHistoriqueSerializer,
+    SubscriptionPlanningSerializer, AppNotificationSerializer
 )
 from accounts.serializers import UserSerializer
 from .filters import DemandeFilter
@@ -796,6 +797,81 @@ class DemandeViewSet(viewsets.ModelViewSet):
         response['Cache-Control'] = 'no-store, no-cache, must-revalidate, private'
         return response
 
+    @action(detail=True, methods=['get', 'post', 'patch'])
+    def planning(self, request, pk=None):
+        demande = self.get_object()
+        
+        if request.method == 'GET':
+            try:
+                planning = demande.planning
+                serializer = SubscriptionPlanningSerializer(planning)
+                return Response(serializer.data)
+            except SubscriptionPlanning.DoesNotExist:
+                return Response({'detail': 'No planning found for this demand.'}, status=status.HTTP_404_NOT_FOUND)
+                
+        elif request.method == 'POST':
+            data = request.data.copy()
+            data['demande'] = demande.id
+            
+            try:
+                planning = demande.planning
+                serializer = SubscriptionPlanningSerializer(planning, data=data)
+            except SubscriptionPlanning.DoesNotExist:
+                serializer = SubscriptionPlanningSerializer(data=data)
+                
+            if serializer.is_valid():
+                planning_obj = serializer.save()
+                
+                handle_auto_cloning_of_planning_interventions(demande, planning_obj)
+                
+                self._log_action(
+                    request.user,
+                    'create_planning' if not hasattr(demande, 'planning') else 'update_planning',
+                    demande,
+                    extra_data={'planning_id': planning_obj.id}
+                )
+                
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            
+        elif request.method == 'PATCH':
+            try:
+                planning = demande.planning
+            except SubscriptionPlanning.DoesNotExist:
+                return Response({'detail': 'No planning found to patch.'}, status=status.HTTP_404_NOT_FOUND)
+                
+            serializer = SubscriptionPlanningSerializer(planning, data=request.data, partial=True)
+            if serializer.is_valid():
+                planning_obj = serializer.save()
+                
+                handle_auto_cloning_of_planning_interventions(demande, planning_obj)
+                
+                if 'statut' in request.data:
+                    from clients.models import ClientActionLog
+                    from config.middleware import get_current_user
+                    
+                    status_label_map = {
+                        'en_cours': 'En cours',
+                        'termine': 'Terminé',
+                    }
+                    new_lbl = status_label_map.get(planning_obj.statut, planning_obj.statut)
+                    if demande.client:
+                        ClientActionLog.objects.create(
+                            client=demande.client,
+                            action=f"Statut planning passé à « {new_lbl} »",
+                            details=f"Planning ID {planning_obj.id} : statut={new_lbl}",
+                            user=get_current_user()
+                        )
+                
+                self._log_action(
+                    request.user,
+                    'patch_planning',
+                    demande,
+                    extra_data={'planning_id': planning_obj.id, 'patched_fields': list(request.data.keys())}
+                )
+                return Response(serializer.data)
+            return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
 
 class PublicDemandeCreateView(viewsets.GenericViewSet):
     """Endpoint public pour créer une demande depuis le site web."""
@@ -824,3 +900,121 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['model_name', 'action', 'object_id']
     ordering = ['-timestamp']
+
+
+class AppNotificationViewSet(viewsets.ModelViewSet):
+    queryset = AppNotification.objects.all()
+    serializer_class = AppNotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return AppNotification.objects.none()
+        
+        if user.is_staff or user.role == 'admin':
+            return AppNotification.objects.all()
+            
+        return AppNotification.objects.filter(
+            Q(target_roles__contains=user.role) | Q(target_roles=[]) | Q(target_roles__isnull=True)
+        )
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        # Bypasse la pagination par défaut pour renvoyer une liste propre au widget NotificationBell
+        queryset = queryset[:100]
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
+
+
+def clone_demand_for_date_time(parent_demande, date_val, time_val):
+    if Demande.objects.filter(parent_demande=parent_demande, date_intervention=date_val).exists():
+        return
+    
+    total_price = float(parent_demande.prix) if parent_demande.prix else 0
+    session_price = total_price
+    
+    tva_active = parent_demande.formulaire_data.get('facturation', {}).get('tva_active', False) if isinstance(parent_demande.formulaire_data, dict) else False
+    parent_facturation = parent_demande.formulaire_data.get('facturation', {}) if isinstance(parent_demande.formulaire_data, dict) else {}
+    session_price_ht = float(parent_facturation.get('montant_ht', session_price))
+    if tva_active and session_price_ht == session_price:
+        session_price_ht = round(session_price / 1.2, 2)
+    
+    new_formulaire_data = dict(parent_demande.formulaire_data) if isinstance(parent_demande.formulaire_data, dict) else {}
+    new_formulaire_data['frequence'] = parent_demande.frequency_label or 'Abonnement'
+    new_formulaire_data['frequency'] = 'abonnement'
+    new_formulaire_data['date'] = date_val.isoformat()
+    new_formulaire_data['heure'] = time_val or ''
+    new_formulaire_data['montant'] = session_price
+    new_formulaire_data['total'] = session_price
+    new_formulaire_data['facturation'] = {
+        'montant_ht': session_price_ht,
+        'tva_active': tva_active,
+        'montant_ttc': session_price,
+        'montant_verse': 0,
+        'facturation_annulee': False,
+        'statut_paiement_ui': 'non_confirme',
+        'mode_paiement': parent_demande.mode_paiement,
+        'part_agence': session_price,
+        'parts_repartition': [],
+    }
+    
+    Demande.objects.create(
+        client=parent_demande.client,
+        service=parent_demande.service,
+        segment=parent_demande.segment,
+        source=parent_demande.source or Demande.BACKOFFICE,
+        statut=Demande.ENCOURS,
+        frequency=Demande.ABONNEMENT,
+        frequency_label=parent_demande.frequency_label or "Abonnement",
+        date_intervention=date_val,
+        heure_intervention=time_val or '',
+        prix=Decimal(str(session_price)),
+        mode_paiement=parent_demande.mode_paiement,
+        statut_paiement=Demande.NON_PAYE,
+        note_commercial=parent_demande.note_commercial,
+        note_operationnel=parent_demande.note_operationnel,
+        preference_horaire=parent_demande.preference_horaire,
+        formulaire_data=new_formulaire_data,
+        assigned_to=parent_demande.assigned_to,
+        parent_demande=parent_demande,
+    )
+
+
+def handle_auto_cloning_of_planning_interventions(demande, planning_obj):
+    if planning_obj.semaines and isinstance(planning_obj.semaines, list):
+        days_map = {
+            0: 'lundi',
+            1: 'mardi',
+            2: 'mercredi',
+            3: 'jeudi',
+            4: 'vendredi',
+            5: 'samedi',
+            6: 'dimanche'
+        }
+        for week in planning_obj.semaines:
+            if not isinstance(week, dict):
+                continue
+            w_debut = week.get('date_debut')
+            w_fin = week.get('date_fin')
+            if not w_debut or not w_fin:
+                continue
+            try:
+                d_debut = datetime.date.fromisoformat(w_debut)
+                d_fin = datetime.date.fromisoformat(w_fin)
+            except (ValueError, TypeError):
+                continue
+            
+            current_date = d_debut
+            while current_date <= d_fin:
+                if current_date == d_fin and d_fin > d_debut:
+                    break
+                day_name = days_map[current_date.weekday()]
+                jours_dict = week.get('jours', {})
+                day_info = jours_dict.get(day_name, {})
+                if day_info and day_info.get('selected'):
+                    time_val = day_info.get('heure_debut', '')
+                    if time_val and len(time_val) > 5:
+                        time_val = time_val[:5]
+                    clone_demand_for_date_time(demande, current_date, time_val)
+                current_date += datetime.timedelta(days=1)

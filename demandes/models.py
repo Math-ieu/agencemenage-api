@@ -106,6 +106,13 @@ class Demande(models.Model):
         related_name='demandes_assignees',
         verbose_name="Commercial assigné"
     )
+    parent_demande = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='interventions_generees',
+        verbose_name="Demande d'abonnement parente"
+    )
 
     # Identification & Matching Logic
     ID_NOUVELLE = 'nouvelle'
@@ -179,6 +186,54 @@ class Demande(models.Model):
     def __str__(self):
         client_name = self.client.display_name if self.client else "Sans client"
         return f"[{self.get_statut_display()}] {self.service} — {client_name}"
+
+
+class SubscriptionPlanning(models.Model):
+    STATUS_CHOICES = [
+        ('en_cours', 'En cours'),
+        ('termine', 'Terminé'),
+    ]
+    
+    demande = models.OneToOneField(Demande, on_delete=models.CASCADE, related_name='planning')
+    jours_intervention = models.JSONField(default=list)  # ["lundi", "mercredi", "vendredi"]
+    semaines = models.JSONField(default=list, blank=True)  # Detailed list of weeks with days and times
+    heure_debut = models.TimeField(null=True, blank=True)
+    heure_fin = models.TimeField(null=True, blank=True)
+    date_debut = models.DateField()
+    date_fin = models.DateField(null=True, blank=True)
+    statut = models.CharField(max_length=20, choices=STATUS_CHOICES, default='en_cours')
+    notes = models.TextField(blank=True)
+    notification_sent_dates = models.JSONField(default=list)  # Track sent notifications (dates as YYYY-MM-DD)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Planning d'abonnement"
+        verbose_name_plural = "Plannings d'abonnement"
+
+    def __str__(self):
+        return f"Planning — {self.demande}"
+
+
+class AppNotification(models.Model):
+    TYPE_CHOICES = [
+        ('rappel_intervention', 'Rappel intervention'),
+        ('info', 'Information'),
+    ]
+    type = models.CharField(max_length=50, choices=TYPE_CHOICES)
+    title = models.CharField(max_length=255)
+    message = models.TextField()
+    demande = models.ForeignKey(Demande, on_delete=models.CASCADE, null=True, blank=True)
+    is_read = models.BooleanField(default=False)
+    target_roles = models.JSONField(default=list)  # ["operations", "admin"]
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        verbose_name = 'Notification'
+        ordering = ['-created_at']
+
+    def __str__(self):
+        return f"{self.title} ({self.created_at.strftime('%d/%m/%Y')})"
 
 
 class NRPLog(models.Model):

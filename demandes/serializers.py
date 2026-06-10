@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Demande, NRPLog, Document, AuditLog, ProfilShare
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification
 from django.conf import settings
 from .utils.whatsapp import WhatsAppService
 from .utils.document_helpers import generate_demande_document
@@ -42,6 +42,21 @@ class NRPLogSerializer(serializers.ModelSerializer):
         fields = ['id', 'commercial_name', 'date', 'notes']
 
 
+class SubscriptionPlanningSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SubscriptionPlanning
+        fields = '__all__'
+
+
+class AppNotificationSerializer(serializers.ModelSerializer):
+    demande_service = serializers.CharField(source='demande.service', read_only=True)
+    demande_client_name = serializers.CharField(source='demande.client.display_name', read_only=True)
+
+    class Meta:
+        model = AppNotification
+        fields = '__all__'
+
+
 class DemandeSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
@@ -55,11 +70,95 @@ class DemandeSerializer(serializers.ModelSerializer):
     envoyer_whatsapp = serializers.BooleanField(write_only=True, required=False, default=False)
     profils_envoyes = AgentListSerializer(many=True, read_only=True)
     geste_commercial = serializers.SerializerMethodField()
+    planning = SubscriptionPlanningSerializer(read_only=True)
 
     class Meta:
         model = Demande
         fields = '__all__'
         extra_fields = ['reste_a_payer', 'geste_commercial']
+
+    def _stamp_parts_repartition(self, instance, validated_data):
+        from django.utils import timezone
+        
+        request = self.context.get('request')
+        user = request.user if request else None
+        user_name = 'Système'
+        if user:
+            if user.first_name:
+                user_name = user.first_name
+            elif hasattr(user, 'full_name') and user.full_name:
+                user_name = user.full_name.split(' ')[0]
+            else:
+                user_name = user.username
+
+        current_time = timezone.localtime(timezone.now())
+        formatted_date = current_time.strftime("%d/%m/%Y à %H:%M")
+        
+        new_parts = validated_data.get('parts_repartition')
+        form_data = validated_data.get('formulaire_data')
+        
+        if not new_parts and isinstance(form_data, dict):
+            new_parts = form_data.get('facturation', {}).get('parts_repartition')
+            
+        if new_parts is None:
+            return
+            
+        old_parts = instance.parts_repartition if instance else []
+        if not old_parts and instance and isinstance(instance.formulaire_data, dict):
+            old_parts = instance.formulaire_data.get('facturation', {}).get('parts_repartition', [])
+            
+        if not isinstance(old_parts, list):
+            old_parts = []
+            
+        old_parts_by_profile = {}
+        for part in old_parts:
+            p_id = part.get('profile_id')
+            if p_id:
+                old_parts_by_profile[str(p_id)] = part
+                
+        updated_parts = []
+        for part in new_parts:
+            if not isinstance(part, dict):
+                continue
+            
+            p_id = part.get('profile_id')
+            p_id_str = str(p_id) if p_id else None
+            
+            old_part = old_parts_by_profile.get(p_id_str) if p_id_str else None
+            
+            changed = True
+            if old_part:
+                # Helper to safely compare float values
+                def to_f(v):
+                    try:
+                        return float(v)
+                    except (ValueError, TypeError):
+                        return 0.0
+                
+                changed = (
+                    to_f(part.get('amount')) != to_f(old_part.get('amount')) or
+                    part.get('hours') != old_part.get('hours') or
+                    part.get('days') != old_part.get('days') or
+                    part.get('rate_value') != old_part.get('rate_value') or
+                    part.get('rate_type') != old_part.get('rate_type') or
+                    part.get('is_delegate') != old_part.get('is_delegate')
+                )
+                
+            if old_part and not changed:
+                part['created_at'] = old_part.get('created_at')
+                part['created_by_name'] = old_part.get('created_by_name')
+            else:
+                part['created_at'] = formatted_date
+                part['created_by_name'] = user_name
+                
+            updated_parts.append(part)
+            
+        validated_data['parts_repartition'] = updated_parts
+        if 'formulaire_data' in validated_data and isinstance(validated_data['formulaire_data'], dict):
+            if 'facturation' not in validated_data['formulaire_data']:
+                validated_data['formulaire_data']['facturation'] = {}
+            if isinstance(validated_data['formulaire_data']['facturation'], dict):
+                validated_data['formulaire_data']['facturation']['parts_repartition'] = updated_parts
 
     def validate(self, attrs):
         statut = attrs.get('statut')
@@ -111,6 +210,7 @@ class DemandeSerializer(serializers.ModelSerializer):
         return None
 
     def create(self, validated_data):
+        self._stamp_parts_repartition(None, validated_data)
         client_name = validated_data.pop('client_name', '').strip()
         client_phone = validated_data.pop('client_phone', '').strip()
         
@@ -208,6 +308,7 @@ class DemandeSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
     def update(self, instance, validated_data):
+        self._stamp_parts_repartition(instance, validated_data)
         client_name = validated_data.pop('client_name', None)
         client_phone = validated_data.pop('client_phone', None)
         
@@ -357,6 +458,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     profil_sera_paye = serializers.SerializerMethodField()
     montant_profil_annulation = serializers.SerializerMethodField()
     geste_commercial = serializers.SerializerMethodField()
+    planning = SubscriptionPlanningSerializer(read_only=True)
 
     class Meta:
         model = Demande
@@ -373,7 +475,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
             'assigned_to_name', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
-            'note_commercial', 'note_operationnel', 'geste_commercial'
+            'note_commercial', 'note_operationnel', 'geste_commercial', 'planning', 'parent_demande'
         ]
 
     def _get_facturation_field(self, obj, field, default=None):
