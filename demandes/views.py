@@ -818,8 +818,6 @@ class DemandeViewSet(viewsets.ModelViewSet):
             if serializer.is_valid():
                 planning_obj = serializer.save()
                 
-                handle_auto_cloning_of_planning_interventions(demande, planning_obj)
-                
                 self._log_action(
                     request.user,
                     'create_planning' if not hasattr(demande, 'planning') else 'update_planning',
@@ -839,8 +837,6 @@ class DemandeViewSet(viewsets.ModelViewSet):
             serializer = SubscriptionPlanningSerializer(planning, data=request.data, partial=True)
             if serializer.is_valid():
                 planning_obj = serializer.save()
-                
-                handle_auto_cloning_of_planning_interventions(demande, planning_obj)
                 
                 if 'statut' in request.data:
                     from clients.models import ClientActionLog
@@ -867,6 +863,52 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 )
                 return Response(serializer.data)
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+    @action(detail=True, methods=['post'])
+    def create_planning_intervention(self, request, pk=None):
+        demande = self.get_object()
+        date_str = request.data.get('date')
+        time_str = request.data.get('time', '')
+        week_id = request.data.get('week_id')
+        day_key = request.data.get('day_key')
+        
+        if not date_str or not week_id or not day_key:
+            return Response({'error': 'date, week_id et day_key sont requis'}, status=400)
+            
+        try:
+            date_val = datetime.date.fromisoformat(date_str)
+        except ValueError:
+            return Response({'error': 'Format de date invalide (YYYY-MM-DD)'}, status=400)
+            
+        try:
+            planning = demande.planning
+        except SubscriptionPlanning.DoesNotExist:
+            return Response({'error': 'Aucun planning trouvé pour cette demande'}, status=404)
+            
+        new_demande = clone_demand_for_date_time(demande, date_val, time_str)
+        
+        # Update the semaines JSON to set the demande_id
+        semaines = planning.semaines or []
+        updated = False
+        for week in semaines:
+            if week.get('id') == week_id:
+                jours = week.get('jours', {})
+                if day_key in jours:
+                    if not isinstance(jours[day_key], dict):
+                        jours[day_key] = {'selected': True, 'heure_debut': time_str, 'heure_fin': ''}
+                    jours[day_key]['demande_id'] = new_demande.id
+                    updated = True
+                    break
+        
+        if updated:
+            planning.semaines = semaines
+            planning.save()
+            
+        return Response({
+            'success': True,
+            'demande_id': new_demande.id,
+            'planning': SubscriptionPlanningSerializer(planning).data
+        })
 
 
 class PublicDemandeCreateView(viewsets.GenericViewSet):
@@ -929,8 +971,9 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
 
 
 def clone_demand_for_date_time(parent_demande, date_val, time_val):
-    if Demande.objects.filter(parent_demande=parent_demande, date_intervention=date_val).exists():
-        return
+    existing = Demande.objects.filter(parent_demande=parent_demande, date_intervention=date_val).first()
+    if existing:
+        return existing
     
     total_price = float(parent_demande.prix) if parent_demande.prix else 0
     session_price = total_price
@@ -960,7 +1003,7 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         'parts_repartition': [],
     }
     
-    Demande.objects.create(
+    return Demande.objects.create(
         client=parent_demande.client,
         service=parent_demande.service,
         segment=parent_demande.segment,

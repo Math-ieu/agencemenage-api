@@ -33,6 +33,8 @@ class Command(BaseCommand):
             is_active_for_tomorrow = False
             heure_debut_obj = None
             heure_fin_obj = None
+            target_week = None
+            target_day_info = None
             
             if planning.semaines and isinstance(planning.semaines, list) and len(planning.semaines) > 0:
                 # Search for a matching week in semaines
@@ -70,6 +72,8 @@ class Command(BaseCommand):
                         is_active_for_tomorrow = True
                         active_heure_debut = day_info.get('heure_debut')
                         active_heure_fin = day_info.get('heure_fin')
+                        target_week = week
+                        target_day_info = day_info
                         
                         def parse_time_str(t_str):
                             if not t_str:
@@ -121,60 +125,77 @@ class Command(BaseCommand):
             heure_str = f"{heure_debut_str} à {heure_fin_str}" if heure_fin_str else heure_debut_str
             
             with transaction.atomic():
-                # Calculate session price
-                total_price = float(demande.prix) if demande.prix else 0
-                session_price = total_price
+                existing_demande_id = target_day_info.get('demande_id') if target_day_info else None
+                new_demande = None
                 
-                from decimal import Decimal
-                tva_active = demande.formulaire_data.get('facturation', {}).get('tva_active', False) if isinstance(demande.formulaire_data, dict) else False
-                parent_facturation = demande.formulaire_data.get('facturation', {}) if isinstance(demande.formulaire_data, dict) else {}
-                session_price_ht = float(parent_facturation.get('montant_ht', session_price))
-                if tva_active and session_price_ht == session_price:
-                    session_price_ht = round(session_price / 1.2, 2)
-                
-                new_formulaire_data = dict(demande.formulaire_data) if isinstance(demande.formulaire_data, dict) else {}
-                new_formulaire_data['frequence'] = demande.frequency_label or 'Abonnement'
-                new_formulaire_data['frequency'] = 'abonnement'
-                new_formulaire_data['date'] = tomorrow_str
-                new_formulaire_data['heure'] = heure_debut_obj.strftime('%H:%M') if heure_debut_obj else ''
-                new_formulaire_data['montant'] = session_price
-                new_formulaire_data['total'] = session_price
-                new_formulaire_data['facturation'] = {
-                    'montant_ht': session_price_ht,
-                    'tva_active': tva_active,
-                    'montant_ttc': session_price,
-                    'montant_verse': 0,
-                    'facturation_annulee': False,
-                    'statut_paiement_ui': 'non_confirme',
-                    'mode_paiement': demande.mode_paiement,
-                    'part_agence': 0,
-                    'parts_repartition': [],
-                }
-                
-                # Create the new Demande
-                new_demande = Demande.objects.create(
-                    client=demande.client,
-                    service=demande.service,
-                    segment=demande.segment,
-                    source=Demande.BACKOFFICE,
-                    statut=Demande.ENCOURS,
-                    frequency=Demande.ABONNEMENT,
-                    frequency_label=demande.frequency_label or "Abonnement",
-                    date_intervention=tomorrow,
-                    heure_intervention=heure_debut_obj.strftime('%H:%M') if heure_debut_obj else '',
-                    prix=Decimal(str(session_price)),
-                    part_agence=Decimal('0'),
-                    mode_paiement=demande.mode_paiement,
-                    statut_paiement=Demande.NON_PAYE,
-                    note_commercial=demande.note_commercial,
-                    note_operationnel=demande.note_operationnel,
-                    preference_horaire=demande.preference_horaire,
-                    formulaire_data=new_formulaire_data,
-                    assigned_to=demande.assigned_to,
-                    parent_demande=demande,
-                )
+                if existing_demande_id:
+                    try:
+                        new_demande = Demande.objects.get(pk=existing_demande_id)
+                        self.stdout.write(f"Rappel pour demande existante #{new_demande.id} pour demain.")
+                    except Demande.DoesNotExist:
+                        new_demande = None
+                        
+                if not new_demande:
+                    # Calculate session price
+                    total_price = float(demande.prix) if demande.prix else 0
+                    session_price = total_price
+                    
+                    from decimal import Decimal
+                    tva_active = demande.formulaire_data.get('facturation', {}).get('tva_active', False) if isinstance(demande.formulaire_data, dict) else False
+                    parent_facturation = demande.formulaire_data.get('facturation', {}) if isinstance(demande.formulaire_data, dict) else {}
+                    session_price_ht = float(parent_facturation.get('montant_ht', session_price))
+                    if tva_active and session_price_ht == session_price:
+                        session_price_ht = round(session_price / 1.2, 2)
+                    
+                    new_formulaire_data = dict(demande.formulaire_data) if isinstance(demande.formulaire_data, dict) else {}
+                    new_formulaire_data['frequence'] = demande.frequency_label or 'Abonnement'
+                    new_formulaire_data['frequency'] = 'abonnement'
+                    new_formulaire_data['date'] = tomorrow_str
+                    new_formulaire_data['heure'] = heure_debut_obj.strftime('%H:%M') if heure_debut_obj else ''
+                    new_formulaire_data['montant'] = session_price
+                    new_formulaire_data['total'] = session_price
+                    new_formulaire_data['facturation'] = {
+                        'montant_ht': session_price_ht,
+                        'tva_active': tva_active,
+                        'montant_ttc': session_price,
+                        'montant_verse': 0,
+                        'facturation_annulee': False,
+                        'statut_paiement_ui': 'non_confirme',
+                        'mode_paiement': demande.mode_paiement,
+                        'part_agence': 0,
+                        'parts_repartition': [],
+                    }
+                    
+                    # Create the new Demande
+                    new_demande = Demande.objects.create(
+                        client=demande.client,
+                        service=demande.service,
+                        segment=demande.segment,
+                        source=Demande.BACKOFFICE,
+                        statut=Demande.ENCOURS,
+                        frequency=Demande.ABONNEMENT,
+                        frequency_label=demande.frequency_label or "Abonnement",
+                        date_intervention=tomorrow,
+                        heure_intervention=heure_debut_obj.strftime('%H:%M') if heure_debut_obj else '',
+                        prix=Decimal(str(session_price)),
+                        part_agence=Decimal('0'),
+                        mode_paiement=demande.mode_paiement,
+                        statut_paiement=Demande.NON_PAYE,
+                        note_commercial=demande.note_commercial,
+                        note_operationnel=demande.note_operationnel,
+                        preference_horaire=demande.preference_horaire,
+                        formulaire_data=new_formulaire_data,
+                        assigned_to=demande.assigned_to,
+                        parent_demande=demande,
+                    )
+                    
+                    # Update target_day_info and planning JSON
+                    if target_day_info:
+                        target_day_info['demande_id'] = new_demande.id
+                        planning.semaines = list(planning.semaines)
+                        planning.save()
 
-                # 1. Create In-App Notification pointing to the new Demande
+                # 1. Create In-App Notification pointing to the new/existing Demande
                 app_notif = AppNotification.objects.create(
                     type='rappel_intervention',
                     title=f"Rappel intervention demain chez {client_name}",
@@ -212,6 +233,6 @@ class Command(BaseCommand):
                 planning.save()
                 
                 count += 1
-                self.stdout.write(f"Notification et Demande #{new_demande.id} générées pour le client {client_name} (Planning ID {planning.id})")
+                self.stdout.write(f"Notification et Demande #{new_demande.id} liées pour le client {client_name} (Planning ID {planning.id})")
                 
         self.stdout.write(f"Terminé. {count} interventions notifiées.")
