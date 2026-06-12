@@ -883,7 +883,156 @@ class DemandeViewSet(viewsets.ModelViewSet):
         try:
             planning = demande.planning
         except SubscriptionPlanning.DoesNotExist:
-            return Response({'error': 'Aucun planning trouvé pour cette demande'}, status=404)
+            # Create a default planning dynamically
+            date_debut = demande.date_intervention or datetime.date.today()
+            date_fin = date_debut + datetime.timedelta(days=30)
+            
+            nb_heures = 2
+            if isinstance(demande.formulaire_data, dict):
+                nb_heures = demande.formulaire_data.get('duree') or demande.formulaire_data.get('nb_heures') or 2
+                try:
+                    nb_heures = float(nb_heures)
+                except (ValueError, TypeError):
+                    nb_heures = 2
+            
+            freq_label = demande.frequency_label or '2/sem'
+            
+            # Parse start time if present
+            h_debut = None
+            if demande.heure_intervention:
+                try:
+                    parts = demande.heure_intervention.split(':')
+                    h_debut = datetime.time(int(parts[0]), int(parts[1]))
+                except (ValueError, IndexError):
+                    pass
+            
+            # Local helper imports/definitions
+            def get_monday_helper(d_val):
+                return d_val - datetime.timedelta(days=d_val.weekday())
+
+            def get_day_of_week_key_helper(day_idx):
+                keys = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+                return keys[day_idx]
+
+            def get_frequency_count_helper(flabel):
+                if not flabel:
+                    return 1
+                import re
+                match = re.match(r'^(\d+)/sem', flabel, re.IGNORECASE)
+                if match:
+                    return int(match.group(1))
+                if flabel.lower().strip() == 'quotidien':
+                    return 7
+                return 1
+
+            def get_selected_days_for_frequency_helper(jours_interv, fcount, start_dayk):
+                days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+                sel = [d for d in jours_interv if d in days_order]
+                if len(sel) >= fcount:
+                    return sel[:fcount]
+                try:
+                    start_index = days_order.index(start_dayk)
+                except ValueError:
+                    start_index = 0
+                for idx_offset in range(7):
+                    idx = (start_index + idx_offset) % 7
+                    day = days_order[idx]
+                    if day not in sel:
+                        sel.append(day)
+                    if len(sel) == fcount:
+                        break
+                return sel
+
+            def calculate_end_time_helper(s_str, dur_h):
+                if not s_str:
+                    return ''
+                try:
+                    parts = s_str.split(':')
+                    h, m = int(parts[0]), int(parts[1])
+                except (ValueError, IndexError):
+                    return ''
+                import math
+                end_h = h + math.floor(dur_h)
+                end_m = m + round((dur_h % 1) * 60)
+                if end_m >= 60:
+                    end_h += end_m // 60
+                    end_m = end_m % 60
+                end_h = end_h % 24
+                return f"{end_h:02d}:{end_m:02d}"
+
+            def generate_default_weeks_helper(start_date, end_date, jours_intervention, heure_debut, nb_heures, frequency_label, parent_demande_id):
+                if not start_date or not end_date:
+                    return []
+                start_dayk = get_day_of_week_key_helper(start_date.weekday())
+                fcount = get_frequency_count_helper(frequency_label)
+                selected_days = get_selected_days_for_frequency_helper(jours_intervention, fcount, start_dayk)
+                
+                duration = nb_heures or 2
+                start_hour = heure_debut or '09:00'
+                end_hour = calculate_end_time_helper(start_hour, duration)
+                
+                weeks_list = []
+                current_monday = get_monday_helper(start_date)
+                w_index = 1
+                
+                import random
+                import string
+                
+                while current_monday <= end_date:
+                    week_debut_str = current_monday.isoformat()
+                    sunday = current_monday + datetime.timedelta(days=6)
+                    week_fin_str = sunday.isoformat()
+                    
+                    jours_dict = {}
+                    days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+                    
+                    for offset, day_key in enumerate(days_order):
+                        day_date = current_monday + datetime.timedelta(days=offset)
+                        day_date_str = day_date.isoformat()
+                        
+                        is_parent_day = parent_demande_id and day_date_str == start_date.isoformat()
+                        is_selected = is_parent_day or (day_key in selected_days and start_date <= day_date <= end_date)
+                        
+                        jours_dict[day_key] = {
+                            'selected': is_selected,
+                            'heure_debut': start_hour if is_selected else '',
+                            'heure_fin': end_hour if is_selected else '',
+                            'demande_id': parent_demande_id if is_parent_day else None
+                        }
+                        
+                    w_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=9))
+                    weeks_list.append({
+                        'id': w_id,
+                        'label': f"Semaine {w_index}",
+                        'date_debut': week_debut_str,
+                        'date_fin': week_fin_str,
+                        'termine': False,
+                        'jours': jours_dict
+                    })
+                    w_index += 1
+                    current_monday += datetime.timedelta(days=7)
+                return weeks_list
+
+            default_weeks = generate_default_weeks_helper(
+                start_date=date_debut,
+                end_date=date_fin,
+                jours_intervention=[],
+                heure_debut=demande.heure_intervention or '09:00',
+                nb_heures=nb_heures,
+                frequency_label=freq_label,
+                parent_demande_id=demande.id
+            )
+            
+            planning = SubscriptionPlanning.objects.create(
+                demande=demande,
+                jours_intervention=[],
+                heure_debut=h_debut or datetime.time(9, 0),
+                heure_fin=None,
+                date_debut=date_debut,
+                date_fin=date_fin,
+                statut='en_cours',
+                semaines=default_weeks
+            )
             
         new_demande = clone_demand_for_date_time(demande, date_val, time_str)
         
@@ -891,11 +1040,30 @@ class DemandeViewSet(viewsets.ModelViewSet):
         semaines = planning.semaines or []
         updated = False
         for week in semaines:
+            is_matching_week = False
             if week.get('id') == week_id:
+                is_matching_week = True
+            elif week.get('date_debut') and week.get('date_fin'):
+                try:
+                    w_start = datetime.date.fromisoformat(week['date_debut'])
+                    w_end = datetime.date.fromisoformat(week['date_fin'])
+                    if w_start <= date_val <= w_end:
+                        is_matching_week = True
+                except (ValueError, TypeError):
+                    pass
+            
+            if is_matching_week:
+                # Sync week ID if it differs
+                if week.get('id') != week_id:
+                    week['id'] = week_id
                 jours = week.get('jours', {})
                 if day_key in jours:
                     if not isinstance(jours[day_key], dict):
                         jours[day_key] = {'selected': True, 'heure_debut': time_str, 'heure_fin': ''}
+                    else:
+                        jours[day_key]['selected'] = True
+                        if not jours[day_key].get('heure_debut'):
+                            jours[day_key]['heure_debut'] = time_str
                     jours[day_key]['demande_id'] = new_demande.id
                     updated = True
                     break
