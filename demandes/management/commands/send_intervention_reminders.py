@@ -147,7 +147,7 @@ class Command(BaseCommand):
                     'facturation_annulee': False,
                     'statut_paiement_ui': 'non_confirme',
                     'mode_paiement': demande.mode_paiement,
-                    'part_agence': session_price,
+                    'part_agence': 0,
                     'parts_repartition': [],
                 }
                 
@@ -163,6 +163,7 @@ class Command(BaseCommand):
                     date_intervention=tomorrow,
                     heure_intervention=heure_debut_obj.strftime('%H:%M') if heure_debut_obj else '',
                     prix=Decimal(str(session_price)),
+                    part_agence=Decimal('0'),
                     mode_paiement=demande.mode_paiement,
                     statut_paiement=Demande.NON_PAYE,
                     note_commercial=demande.note_commercial,

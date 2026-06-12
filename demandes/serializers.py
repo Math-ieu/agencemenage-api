@@ -144,9 +144,12 @@ class DemandeSerializer(serializers.ModelSerializer):
                     part.get('is_delegate') != old_part.get('is_delegate')
                 )
                 
-            if old_part and not changed:
-                part['created_at'] = old_part.get('created_at')
-                part['created_by_name'] = old_part.get('created_by_name')
+            if old_part:
+                part['created_at'] = old_part.get('created_at') or formatted_date
+                if changed:
+                    part['created_by_name'] = user_name
+                else:
+                    part['created_by_name'] = old_part.get('created_by_name') or user_name
             else:
                 part['created_at'] = formatted_date
                 part['created_by_name'] = user_name
@@ -178,7 +181,7 @@ class DemandeSerializer(serializers.ModelSerializer):
 
         is_paying = (statut_paiement == Demande.INTEGRAL) or (statut_paiement_ui == 'paye')
 
-        if is_paying and statut != Demande.PRES_TERMINEE:
+        if is_paying and statut not in [Demande.PRES_TERMINEE, Demande.TERMINE]:
             raise serializers.ValidationError(
                 "Le statut 'Payé' ne doit être accessible que si le besoin est préalablement passé au statut 'Prestation terminée'."
             )

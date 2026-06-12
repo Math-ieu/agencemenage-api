@@ -956,7 +956,7 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         'facturation_annulee': False,
         'statut_paiement_ui': 'non_confirme',
         'mode_paiement': parent_demande.mode_paiement,
-        'part_agence': session_price,
+        'part_agence': 0,
         'parts_repartition': [],
     }
     
@@ -971,6 +971,7 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         date_intervention=date_val,
         heure_intervention=time_val or '',
         prix=Decimal(str(session_price)),
+        part_agence=Decimal('0'),
         mode_paiement=parent_demande.mode_paiement,
         statut_paiement=Demande.NON_PAYE,
         note_commercial=parent_demande.note_commercial,
