@@ -582,6 +582,9 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'part_agence',
             'parts_repartition',
             'cao',
+            'parent_demande',
+            'frequency',
+            'frequency_label',
         ]
 
     def get_profil_name(self, obj):
