@@ -124,16 +124,16 @@ class RoleBasedPermission(permissions.BasePermission):
                 return True
 
             if action == 'confirmer_cao':
-                return has_perm('confirmation_avant_operation') or has_perm('valider_demandes')
+                return has_perm('confirmation_avant_operation') or has_perm('traiter_demandes_affectees') or has_perm('creer_valider_demande')
                 
             if action == 'annuler':
-                return has_perm('refuser_demande') or has_perm('annulation_demande')
+                return has_perm('refuser_demande') or has_perm('annulation_demande') or has_perm('traiter_demandes_affectees') or has_perm('creer_valider_demande')
                 
             if action == 'nrp':
-                return has_perm('consulter_demandes') or has_perm('modifier_demande')
+                return has_perm('consulter_demandes') or has_perm('modifier_demande') or has_perm('traiter_demandes_affectees') or has_perm('creer_valider_demande')
                 
             if action == 'affecter':
-                return has_perm('affecter_commercial')
+                return has_perm('affecter_commercial') or has_perm('traiter_demandes_affectees')
 
             if action == 'affecter_operations':
                 return has_perm('assigner_charge_operation')
@@ -145,10 +145,12 @@ class RoleBasedPermission(permissions.BasePermission):
                 return has_perm('creer_geste_commercial') or has_perm('geste_commercial')
                 
             if action == 'create':
-                return has_perm('creer_demande')
+                return has_perm('creer_valider_demande') or has_perm('creer_demande')
                 
             if action in ['update', 'partial_update']:
                 return (
+                    has_perm('traiter_demandes_affectees') or
+                    has_perm('creer_valider_demande') or
                     has_perm('modifier_demande') or 
                     has_perm('editer_besoin') or 
                     has_perm('editer_besoin_facture') or 
@@ -156,7 +158,12 @@ class RoleBasedPermission(permissions.BasePermission):
                 )
                 
             if action in ['list', 'retrieve']:
-                return has_perm('consulter_demandes') or has_perm('consulter_dashboard')
+                return (
+                    has_perm('traiter_demandes_affectees') or
+                    has_perm('creer_valider_demande') or
+                    has_perm('consulter_demandes') or
+                    has_perm('consulter_dashboard')
+                )
 
             if action == 'generate_document':
                 doc_type = request.data.get('type')
@@ -237,14 +244,35 @@ class RoleBasedPermission(permissions.BasePermission):
         
         # 1. DemandeViewSet
         if view_name == 'DemandeViewSet':
-            # Check if user is concerned with this demand
-            is_concerned = (
-                obj.created_by == user or
-                obj.assigned_to == user or
-                obj.assigned_to_operations == user or
-                (obj.source == 'site' and obj.assigned_to is None)
-            )
-            return is_concerned
+            action = getattr(view, 'action', None)
+            # Fetch user permissions
+            from accounts.models import RolePermission
+            db_role = map_role_to_db_key(user.role)
+            try:
+                rp = RolePermission.objects.filter(role=db_role).first()
+                permissions_list = rp.permissions if rp else []
+            except Exception:
+                permissions_list = []
+                
+            has_traiter = 'traiter_demandes_affectees' in permissions_list
+            has_creer_valider = 'creer_valider_demande' in permissions_list
+            
+            # Case A: Created by user
+            if obj.created_by == user:
+                return has_creer_valider
+                
+            # Case B: Assigned to user
+            if obj.assigned_to == user or obj.assigned_to_operations == user:
+                return has_traiter
+                
+            # Case C: Unassigned website demand
+            if obj.source == 'site' and obj.assigned_to is None:
+                # Can only view (retrieve) or assign (affecter)
+                if action in ['retrieve', 'affecter']:
+                    return has_traiter
+                return False
+                
+            return False
             
         # 2. ClientViewSet
         if view_name == 'ClientViewSet':

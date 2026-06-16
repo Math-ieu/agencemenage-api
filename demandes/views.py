@@ -45,12 +45,26 @@ class DemandeViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         if user and user.is_authenticated and user.role != 'admin':
             from django.db.models import Q
-            qs = qs.filter(
-                Q(created_by=user) |
-                Q(assigned_to=user) |
-                Q(assigned_to_operations=user) |
-                Q(source='site', assigned_to__isnull=True)
-            )
+            from accounts.models import RolePermission
+            from accounts.permissions import map_role_to_db_key
+            
+            db_role = map_role_to_db_key(user.role)
+            try:
+                rp = RolePermission.objects.filter(role=db_role).first()
+                permissions_list = rp.permissions if rp else []
+            except Exception:
+                permissions_list = []
+                
+            has_traiter = 'traiter_demandes_affectees' in permissions_list
+            has_creer_valider = 'creer_valider_demande' in permissions_list
+            
+            conditions = Q(pk__in=[])
+            if has_creer_valider:
+                conditions |= Q(created_by=user)
+            if has_traiter:
+                conditions |= Q(assigned_to=user) | Q(assigned_to_operations=user) | Q(source='site', assigned_to__isnull=True)
+                
+            qs = qs.filter(conditions)
         return qs
 
     def get_serializer_class(self):
