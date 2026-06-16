@@ -10,6 +10,19 @@ from .filters import ClientFilter
 class ClientViewSet(viewsets.ModelViewSet):
     queryset = Client.objects.prefetch_related('demandes').filter(is_archived=False)
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+        if user and user.is_authenticated and user.role != 'admin':
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(assigned_commercial=user) |
+                Q(demandes__created_by=user) |
+                Q(demandes__assigned_to=user) |
+                Q(demandes__assigned_to_operations=user)
+            ).distinct()
+        return qs
     filterset_class = ClientFilter
     search_fields = ['first_name', 'last_name', 'entity_name', 'phone', 'email', 'neighborhood', 'city']
     ordering_fields = ['created_at', 'last_name', 'entity_name']

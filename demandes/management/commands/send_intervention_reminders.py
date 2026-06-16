@@ -186,6 +186,7 @@ class Command(BaseCommand):
                         preference_horaire=demande.preference_horaire,
                         formulaire_data=new_formulaire_data,
                         assigned_to=demande.assigned_to,
+                        created_by=demande.created_by,
                         parent_demande=demande,
                     )
                     

@@ -74,11 +74,18 @@ class Demande(models.Model):
         (INTEGRAL, 'Payé'),
         (EN_ATTENTE, 'Paiement en attente'),
         (INTERVENTION_GRATUITE, 'Intervention gratuite'),
-        (FACTURATION_ANNULEE, 'Facturation annulée'),
+        (FACTURATION_ANNULEE, 'Annulé'),
     ]
 
     # Core fields
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='demandes', null=True, blank=True)
+    created_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='demandes_creees',
+        verbose_name="Créateur de la demande"
+    )
     service = models.CharField(max_length=200)
     segment = models.CharField(max_length=20, choices=SEGMENT_CHOICES, default=PARTICULIER)
     source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SITE)
@@ -105,6 +112,13 @@ class Demande(models.Model):
         null=True, blank=True,
         related_name='demandes_assignees',
         verbose_name="Commercial assigné"
+    )
+    assigned_to_operations = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='demandes_operations',
+        verbose_name="Chargé des opérations assigné"
     )
     parent_demande = models.ForeignKey(
         'self',
@@ -367,7 +381,7 @@ def log_demande_changes(sender, instance, **kwargs):
         'profil_paye_client': 'Profil payé / Client',
         'paye': 'Payé',
         'paiement_partiel': 'Paiement partiel',
-        'facturation_annulee': 'Facturation annulée',
+        'facturation_annulee': 'Annulé',
     }
 
     # 1. Facturation annulée
@@ -428,4 +442,68 @@ def log_demande_creation(sender, instance, created, **kwargs):
             details=f"Service : {instance.service} | Tarif : {instance.prix or 'À définir'} MAD",
             user=get_current_user()
         )
+
+
+@receiver(pre_save, sender=Demande)
+def handle_demande_cancellation(sender, instance, **kwargs):
+    is_cancelled = False
+    if not instance.pk:
+        if instance.statut == Demande.ANNULE:
+            is_cancelled = True
+    else:
+        try:
+            old_instance = Demande.objects.get(pk=instance.pk)
+            if instance.statut == Demande.ANNULE and old_instance.statut != Demande.ANNULE:
+                is_cancelled = True
+        except Demande.DoesNotExist:
+            pass
+
+    if is_cancelled:
+        instance.prix = 0
+        instance.part_agence = 0
+        instance.parts_repartition = []
+        instance.statut_paiement = Demande.FACTURATION_ANNULEE
+
+        if not isinstance(instance.formulaire_data, dict):
+            instance.formulaire_data = {}
+
+        fact = instance.formulaire_data.get('facturation', {})
+        if not isinstance(fact, dict):
+            fact = {}
+
+        fact['montant_ht'] = 0
+        fact['total'] = 0
+        fact['total_ht'] = 0
+        fact['total_ttc'] = 0
+        fact['montant_verse'] = 0
+        fact['part_agence'] = 0
+        fact['montant_agence_doit_profil'] = 0
+        fact['montant_profil_doit_agence'] = 0
+        fact['parts_repartition'] = []
+        fact['statut_paiement_ui'] = 'facturation_annulee'
+        fact['facturation_annulee'] = True
+        fact['profil_sera_paye'] = False
+        fact['montant_profil_annulation'] = 0
+
+        instance.formulaire_data['facturation'] = fact
+        instance.formulaire_data['statut_paiement_ui'] = 'facturation_annulee'
+
+
+@receiver(post_save, sender=Demande)
+def cancel_related_missions(sender, instance, **kwargs):
+    if instance.statut == Demande.ANNULE:
+        from missions.models import Mission
+        Mission.objects.filter(demande=instance).update(
+            statut=Mission.ANNULEE,
+            montant_paye=0,
+            montant_encaisse_profil=0,
+            paiement_client_statut=Mission.PAIEMENT_ANNULE,
+            part_profil_versee=False,
+            part_agence_reversee=False,
+            profil_sera_paye=False,
+            montant_profil_annulation=0,
+            montant_agence_doit_profil=0,
+            montant_profil_doit_agence=0
+        )
+
 

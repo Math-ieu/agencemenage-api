@@ -40,7 +40,7 @@ class Mission(models.Model):
         (PAIEMENT_PARTIEL, 'Paiement partiel'),
         (PAIEMENT_AGENCE_PAYEE, 'Agence payée / Client'),
         (PAIEMENT_PROFIL_PAYE, 'Profil payé / Client'),
-        (PAIEMENT_ANNULE, 'Facturation annulée'),
+        (PAIEMENT_ANNULE, 'Annulé'),
         (PAIEMENT_GRATUIT, 'Intervention gratuite'),
     ]
 

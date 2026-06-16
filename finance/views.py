@@ -18,6 +18,18 @@ class FactureViewSet(viewsets.ModelViewSet):
 
     queryset = Facture.objects.select_related('client', 'demande').prefetch_related('paiements')
     serializer_class = FactureSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+        if user and user.is_authenticated and user.role != 'admin':
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(demande__created_by=user) |
+                Q(demande__assigned_to=user) |
+                Q(demande__assigned_to_operations=user)
+            )
+        return qs
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['statut', 'client']
     search_fields = ['numero', 'client__first_name', 'client__last_name', 'client__entity_name']
@@ -34,6 +46,18 @@ class PaiementViewSet(viewsets.ModelViewSet):
 
     queryset = Paiement.objects.select_related('facture').all()
     serializer_class = PaiementSerializer
+
+    def get_queryset(self):
+        user = self.request.user
+        qs = super().get_queryset()
+        if user and user.is_authenticated and user.role != 'admin':
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(facture__demande__created_by=user) |
+                Q(facture__demande__assigned_to=user) |
+                Q(facture__demande__assigned_to_operations=user)
+            )
+        return qs
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['mode', 'facture']
     ordering = ['-date']
@@ -64,7 +88,19 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
+        user = self.request.user
         queryset = super().get_queryset().select_related('client', 'created_by')
+        if user and user.is_authenticated and user.role != 'admin':
+            from django.db.models import Q
+            queryset = queryset.filter(
+                Q(paiement__facture__demande__created_by=user) |
+                Q(paiement__facture__demande__assigned_to=user) |
+                Q(paiement__facture__demande__assigned_to_operations=user) |
+                Q(client__assigned_commercial=user) |
+                Q(client__demandes__created_by=user) |
+                Q(client__demandes__assigned_to=user) |
+                Q(client__demandes__assigned_to_operations=user)
+            ).distinct()
 
         search = self.request.query_params.get('search')
         date_from = self.request.query_params.get('date_from')

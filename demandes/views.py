@@ -41,7 +41,17 @@ class DemandeViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), RoleBasedPermission()]
     
     def get_queryset(self):
-        return super().get_queryset()
+        user = self.request.user
+        qs = super().get_queryset()
+        if user and user.is_authenticated and user.role != 'admin':
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(created_by=user) |
+                Q(assigned_to=user) |
+                Q(assigned_to_operations=user) |
+                Q(source='site', assigned_to__isnull=True)
+            )
+        return qs
 
     def get_serializer_class(self):
         if self.action == 'list':
@@ -49,7 +59,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
         return DemandeSerializer
 
     def perform_create(self, serializer):
-        serializer.save(assigned_to=self.request.user)
+        serializer.save(assigned_to=self.request.user, created_by=self.request.user)
 
     def perform_update(self, serializer):
         instance = serializer.instance
@@ -287,6 +297,23 @@ class DemandeViewSet(viewsets.ModelViewSet):
         demande.assigned_to = commercial
         demande.save()
         self._log_action(request.user, 'affecter', demande, extra_data={'commercial_id': commercial_id, 'commercial_name': commercial.full_name})
+        return Response(DemandeSerializer(demande).data)
+
+    @action(detail=True, methods=['post'])
+    def affecter_operations(self, request, pk=None):
+        """Affecter la demande à un chargé d'opérations."""
+        demande = self.get_object()
+        ops_id = request.data.get('operations_id')
+        if not ops_id:
+            return Response({'error': 'operations_id requis'}, status=400)
+        from accounts.models import User
+        try:
+            ops_user = User.objects.get(pk=ops_id, is_active=True, role='charge_operations')
+        except User.DoesNotExist:
+            return Response({'error': 'Chargé d\'opérations introuvable'}, status=404)
+        demande.assigned_to_operations = ops_user
+        demande.save()
+        self._log_action(request.user, 'affecter_operations', demande, extra_data={'operations_id': ops_id, 'operations_name': ops_user.full_name})
         return Response(DemandeSerializer(demande).data)
 
     @action(detail=True, methods=['post'])
@@ -1190,6 +1217,7 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         preference_horaire=parent_demande.preference_horaire,
         formulaire_data=new_formulaire_data,
         assigned_to=parent_demande.assigned_to,
+        created_by=parent_demande.created_by,
         parent_demande=parent_demande,
     )
 

@@ -31,7 +31,19 @@ class FeedbackViewSet(viewsets.ModelViewSet):
     ordering = ['-date']
 
     def get_queryset(self):
+        user = self.request.user
         qs = super().get_queryset()
+        if user and user.is_authenticated and user.role != 'admin':
+            from django.db.models import Q
+            qs = qs.filter(
+                Q(demande__created_by=user) |
+                Q(demande__assigned_to=user) |
+                Q(demande__assigned_to_operations=user) |
+                Q(mission__demande__created_by=user) |
+                Q(mission__demande__assigned_to=user) |
+                Q(mission__demande__assigned_to_operations=user)
+            ).distinct()
+            
         city = self.request.query_params.get('city')
         if city:
             qs = qs.filter(demande__client__city__icontains=city)

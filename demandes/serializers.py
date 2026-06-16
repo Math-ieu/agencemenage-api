@@ -63,6 +63,8 @@ class DemandeSerializer(serializers.ModelSerializer):
     client_detail = ClientListSerializer(source='client', read_only=True)
     potential_duplicate_detail = ClientListSerializer(source='potential_duplicate_client', read_only=True)
     assigned_to_detail = UserSerializer(source='assigned_to', read_only=True)
+    assigned_to_operations_name = serializers.CharField(source='assigned_to_operations.full_name', read_only=True)
+    assigned_to_operations_detail = UserSerializer(source='assigned_to_operations', read_only=True)
     nrp_count = serializers.SerializerMethodField()
     nrp_logs = NRPLogSerializer(many=True, read_only=True)
     documents = DocumentSerializer(many=True, read_only=True)
@@ -444,6 +446,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     client_neighborhood = serializers.CharField(source='client.neighborhood', read_only=True)
     client_address = serializers.CharField(source='client.address', read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True)
+    assigned_to_operations_name = serializers.CharField(source='assigned_to_operations.full_name', read_only=True)
     mode_paiement_label = serializers.CharField(source='get_mode_paiement_display', read_only=True)
     statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
     nrp_count = serializers.SerializerMethodField()
@@ -477,7 +480,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp',
             'client_city', 'client_neighborhood', 'client_address',
-            'assigned_to_name', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
+            'assigned_to', 'assigned_to_name', 'assigned_to_operations', 'assigned_to_operations_name', 'created_by', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
             'note_commercial', 'note_operationnel', 'geste_commercial', 'planning', 'parent_demande'
         ]
 
@@ -615,7 +618,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'profil_paye_client': 'Profil payé / Client',
             'paye': 'Payé',
             'paiement_partiel': 'Paiement partiel',
-            'facturation_annulee': 'Facturation annulée',
+            'facturation_annulee': 'Annulé',
         }
         if ui_value in ui_map:
             return ui_map[ui_value]
