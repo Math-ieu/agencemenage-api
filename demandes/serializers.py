@@ -616,6 +616,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'paiement_en_attente': 'Paiement en attente',
             'agence_payee_client': 'Agence payé / Client',
             'profil_paye_client': 'Profil payé / Client',
+            'commercial_paye_client': 'Commercial payé / client',
             'paye': 'Payé',
             'paiement_partiel': 'Paiement partiel',
             'facturation_annulee': 'Annulé',

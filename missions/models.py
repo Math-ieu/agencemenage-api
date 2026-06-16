@@ -31,6 +31,7 @@ class Mission(models.Model):
     PAIEMENT_PARTIEL = 'partiel'
     PAIEMENT_AGENCE_PAYEE = 'agence_payee_client'
     PAIEMENT_PROFIL_PAYE = 'profil_paye_client'
+    PAIEMENT_COMMERCIAL_PAYE = 'commercial_paye_client'
     PAIEMENT_ANNULE = 'facturation_annulee'
     PAIEMENT_GRATUIT = 'intervention_gratuite'
     PAIEMENT_STATUT_CHOICES = [
@@ -40,9 +41,11 @@ class Mission(models.Model):
         (PAIEMENT_PARTIEL, 'Paiement partiel'),
         (PAIEMENT_AGENCE_PAYEE, 'Agence payée / Client'),
         (PAIEMENT_PROFIL_PAYE, 'Profil payé / Client'),
+        (PAIEMENT_COMMERCIAL_PAYE, 'Commercial payé / client'),
         (PAIEMENT_ANNULE, 'Annulé'),
         (PAIEMENT_GRATUIT, 'Intervention gratuite'),
     ]
+
 
     MODE_VIREMENT = 'virement'
     MODE_CHEQUE = 'cheque'
