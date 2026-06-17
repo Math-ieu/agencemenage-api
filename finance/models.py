@@ -101,7 +101,34 @@ class EntreeCaisse(models.Model):
         (PAIEMENT_AGENCE, 'Paiement agence'),
     ]
 
+    CATEGORIE_CHOICES = [
+        ('Encaissement client (auto)', 'Encaissement client (auto)'),
+        ('Remise FM — espèces', 'Remise FM — espèces'),
+        ('Dépôt commercial — espèces', 'Dépôt commercial — espèces'),
+        ('Virement client reçu', 'Virement client reçu'),
+        ('Autre entrée', 'Autre entrée'),
+        ('Salaires (équipe agence)', 'Salaires (équipe agence)'),
+        ('Paiement femmes de ménage', 'Paiement femmes de ménage'),
+        ('Achat produits ménagers', 'Achat produits ménagers'),
+        ('Achat matériel / équipement', 'Achat matériel / équipement'),
+        ('Loyer & charges bureaux', 'Loyer & charges bureaux'),
+        ('Publicité & Marketin', 'Publicité & Marketin'),
+    ]
+
     type_mouvement = models.CharField(max_length=15, choices=TYPE_CHOICES)
+    categorie = models.CharField(max_length=100, choices=CATEGORIE_CHOICES, blank=True, default='')
+
+    CAISSE = 'caisse'
+    TRESORERIE = 'tresorerie'
+    CAISSE_TYPE_CHOICES = [
+        (CAISSE, 'Caisse'),
+        (TRESORERIE, 'Trésorerie'),
+    ]
+    caisse_type = models.CharField(
+        max_length=20,
+        choices=CAISSE_TYPE_CHOICES,
+        default=CAISSE
+    )
     montant = models.DecimalField(max_digits=10, decimal_places=2)
     description = models.CharField(max_length=300)
     date = models.DateField()

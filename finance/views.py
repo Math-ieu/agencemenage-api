@@ -83,8 +83,8 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
     queryset = EntreeCaisse.objects.all()
     serializer_class = EntreeCaisseSerializer
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['type_mouvement', 'mode_paiement', 'date', 'client']
-    ordering = ['-date']
+    filterset_fields = ['type_mouvement', 'mode_paiement', 'date', 'client', 'categorie', 'utilisateur', 'caisse_type']
+    ordering = ['-date', '-id']
     parser_classes = [JSONParser, MultiPartParser, FormParser]
 
     def get_queryset(self):
@@ -102,6 +102,9 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
                 Q(client__demandes__assigned_to_operations=user)
             ).distinct()
 
+        caisse_type = self.request.query_params.get('caisse_type', 'caisse')
+        queryset = queryset.filter(caisse_type=caisse_type)
+
         search = self.request.query_params.get('search')
         date_from = self.request.query_params.get('date_from')
         date_to = self.request.query_params.get('date_to')
@@ -114,6 +117,8 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
                 | Q(client__first_name__icontains=search)
                 | Q(client__last_name__icontains=search)
                 | Q(client__entity_name__icontains=search)
+                | Q(categorie__icontains=search)
+                | Q(notes__icontains=search)
             )
 
         if date_from:
@@ -128,17 +133,19 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def solde(self, request):
-        """Calcule le solde total de la caisse."""
-        entrees = EntreeCaisse.objects.filter(type_mouvement='entree').aggregate(t=Sum('montant'))['t'] or 0
-        sorties = EntreeCaisse.objects.filter(type_mouvement='sortie').aggregate(t=Sum('montant'))['t'] or 0
-        alimentations = EntreeCaisse.objects.filter(type_mouvement='alimentation').aggregate(t=Sum('montant'))['t'] or 0
+        """Calcule le solde total de la caisse/trésorerie."""
+        caisse_type = request.query_params.get('caisse_type', 'caisse')
+        qs = EntreeCaisse.objects.filter(caisse_type=caisse_type)
+        entrees = qs.filter(type_mouvement='entree').aggregate(t=Sum('montant'))['t'] or 0
+        sorties = qs.filter(type_mouvement='sortie').aggregate(t=Sum('montant'))['t'] or 0
+        alimentations = qs.filter(type_mouvement='alimentation').aggregate(t=Sum('montant'))['t'] or 0
         
         return Response({
             'total_entrees': entrees,
             'total_sorties': sorties,
             'solde': entrees - sorties + alimentations,
             'solde_jour': entrees - sorties - alimentations,
-            'operations_count': EntreeCaisse.objects.count()
+            'operations_count': qs.count()
         })
 
     @action(detail=False, methods=['get'])
@@ -154,11 +161,12 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
         writer.writerow([
             'Date',
             'Type',
+            'Catégorie',
             'Libelle',
             'Client',
             'Mode paiement',
             'Montant (MAD)',
-            'Utilisateur',
+            'Saisi par',
             'Document',
             'Notes',
         ])
@@ -167,6 +175,7 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
             writer.writerow([
                 item.date.strftime('%d/%m/%Y') if item.date else '',
                 item.get_type_mouvement_display(),
+                item.categorie,
                 item.description,
                 item.client_display,
                 item.get_mode_paiement_display(),
