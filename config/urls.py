@@ -16,7 +16,7 @@ from accounts.views import (
 )
 from clients.views import ClientViewSet
 from agents.views import AgentViewSet
-from demandes.views import DemandeViewSet, PublicDemandeCreateView, AuditLogViewSet, DocumentViewSet, AppNotificationViewSet
+from demandes.views import DemandeViewSet, PublicDemandeCreateView, AuditLogViewSet, DocumentViewSet, AppNotificationViewSet, FeteReligieuseViewSet
 from missions.views import MissionViewSet
 from finance.views import FactureViewSet, PaiementViewSet, EntreeCaisseViewSet
 from feedback.views import FeedbackViewSet
@@ -37,6 +37,7 @@ router.register(r'finance/caisse', EntreeCaisseViewSet, basename='caisse')
 router.register(r'feedback', FeedbackViewSet, basename='feedback')
 router.register(r'audit', AuditLogViewSet, basename='audit')
 router.register(r'notifications', AppNotificationViewSet, basename='notification')
+router.register(r'fetes-religieuses', FeteReligieuseViewSet, basename='fete-religieuse')
 router.register(r'blog/categories', CategoryViewSet, basename='blog-category')
 router.register(r'blog/posts', PostViewSet, basename='blog-post')
 

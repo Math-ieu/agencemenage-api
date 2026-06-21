@@ -1,3 +1,4 @@
+from datetime import timedelta
 from django.db import models
 from django.conf import settings
 from clients.models import Client
@@ -26,6 +27,22 @@ class Demande(models.Model):
         (TERMINE, 'Terminé'),
         (PRES_EN_COURS, 'Pres. en cours'),
         (PRES_TERMINEE, 'Pres. terminée'),
+    ]
+
+    # Statuts du devis (workflow brief — indépendant de Demande.statut)
+    DEVIS_BROUILLON = 'brouillon'
+    DEVIS_EN_ATTENTE_VALIDATION = 'en_attente_validation'
+    DEVIS_VALIDE = 'valide'
+    DEVIS_ENVOYE = 'envoye'
+    DEVIS_ACCEPTE = 'accepte'
+    DEVIS_REFUSE = 'refuse'
+    DEVIS_STATUT_CHOICES = [
+        (DEVIS_BROUILLON, 'Brouillon'),
+        (DEVIS_EN_ATTENTE_VALIDATION, 'En attente validation'),
+        (DEVIS_VALIDE, 'Validé'),
+        (DEVIS_ENVOYE, 'Envoyé'),
+        (DEVIS_ACCEPTE, 'Accepté'),
+        (DEVIS_REFUSE, 'Refusé / Expiré'),
     ]
 
     # Fréquences
@@ -101,6 +118,10 @@ class Demande(models.Model):
     # Pricing
     prix = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Prix")
     is_devis = models.BooleanField(default=False, verbose_name="Sur devis")
+    devis_statut = models.CharField(
+        max_length=30, choices=DEVIS_STATUT_CHOICES, default=DEVIS_BROUILLON,
+        verbose_name="Statut du devis"
+    )
     mode_paiement = models.CharField(max_length=20, choices=PAIEMENT_CHOICES, blank=True)
     statut_paiement = models.CharField(max_length=30, choices=PAIEMENT_STATUT_CHOICES, default=NON_PAYE)
     avance_paiement = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
@@ -191,6 +212,52 @@ class Demande(models.Model):
             avance = self.avance_paiement or 0
             return max(0, self.prix - avance)
         return self.prix
+
+    def devis_numero(self):
+        """Numéro de devis officiel, aligné sur le PDF (buildDevisNumber côté frontend) :
+        DEV-{année}-{id sur 4 chiffres}."""
+        from django.utils import timezone
+        return f"DEV-{timezone.now().year}-{self.id:04d}"
+
+    def requires_devis_validation(self):
+        """Déclencheurs « En attente validation » (brief) : fin de chantier > 5 000 DH,
+        post-sinistre grave, remise manuelle, déchets > 500 kg."""
+        form = self.formulaire_data or {}
+        service = (self.service or '').lower()
+
+        def _num(*keys):
+            for k in keys:
+                v = form.get(k)
+                if v not in (None, ''):
+                    try:
+                        return float(str(v).replace(' ', '').replace(',', '.'))
+                    except (ValueError, TypeError):
+                        continue
+            return 0
+
+        total = float(self.prix) if self.prix else _num('total', 'total_ht', 'montant_total', 'montant', 'prix')
+
+        if ('fin de chantier' in service or 'fin chantier' in service) and total > 5000:
+            return True
+        if 'sinistre' in service:
+            niveau = str(form.get('niveau') or form.get('gravite') or '').lower()
+            if 'grave' in niveau:
+                return True
+        if _num('reduction', 'reduction_montant') > 0:
+            return True
+        if _num('poids_dechets', 'dechets_kg') > 500:
+            return True
+        return False
+
+    def apply_devis_auto_validation(self):
+        """Escalade brouillon -> en_attente_validation si un déclencheur s'applique.
+        N'altère jamais un statut déjà avancé (validé / envoyé / accepté / refusé)."""
+        if (self.is_devis
+                and self.devis_statut == self.DEVIS_BROUILLON
+                and self.requires_devis_validation()):
+            self.devis_statut = self.DEVIS_EN_ATTENTE_VALIDATION
+            return True
+        return False
 
     class Meta:
         verbose_name = 'Demande'
@@ -508,3 +575,60 @@ def cancel_related_missions(sender, instance, **kwargs):
         )
 
 
+
+
+class FeteReligieuse(models.Model):
+    """Calendrier des fêtes religieuses — saisie annuelle par l'admin (Section 4.2 du brief).
+
+    Les dates des fêtes islamiques varient chaque année (calendrier hégirien).
+    Règle de suspension : `jours_avant` avant + `jours_apres` après la date.
+    Impact : passages annulés/reportés + notification automatique client & chargée de clientèle.
+    """
+    AID_KEBIR = 'aid_kebir'
+    AID_FITR = 'aid_fitr'
+    MAWLID = 'mawlid'
+    TYPE_CHOICES = [
+        (AID_KEBIR, 'Aïd el Kébir'),
+        (AID_FITR, 'Aïd el Fitr'),
+        (MAWLID, 'Mawlid Ennabawi'),
+    ]
+
+    type = models.CharField(max_length=20, choices=TYPE_CHOICES, verbose_name="Fête")
+    date = models.DateField(verbose_name="Date de la fête")
+    annee = models.IntegerField(verbose_name="Année")
+    jours_avant = models.PositiveIntegerField(default=1, verbose_name="Jours suspendus avant")
+    jours_apres = models.PositiveIntegerField(default=2, verbose_name="Jours suspendus après")
+    actif = models.BooleanField(default=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        verbose_name = "Fête religieuse"
+        verbose_name_plural = "Fêtes religieuses"
+        unique_together = ('type', 'annee')
+        ordering = ['date']
+
+    def __str__(self):
+        return f"{self.get_type_display()} — {self.date}"
+
+    @property
+    def debut_suspension(self):
+        return self.date - timedelta(days=self.jours_avant)
+
+    @property
+    def fin_suspension(self):
+        return self.date + timedelta(days=self.jours_apres)
+
+    def couvre(self, d):
+        """La période de suspension (avant/après) couvre-t-elle la date d ?"""
+        return self.debut_suspension <= d <= self.fin_suspension
+
+    @classmethod
+    def suspension_pour(cls, d):
+        """Renvoie la fête dont la période de suspension couvre la date d, sinon None.
+        Gère le chevauchement d'année (fête en tout début / toute fin d'année)."""
+        for annee in (d.year, d.year - 1, d.year + 1):
+            for f in cls.objects.filter(actif=True, annee=annee):
+                if f.couvre(d):
+                    return f
+        return None

@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse
 from django.conf import settings
 from .utils.whatsapp import WhatsAppService
 from .utils.document_helpers import generate_demande_document
@@ -310,7 +310,13 @@ class DemandeSerializer(serializers.ModelSerializer):
         if 'preference_horaire' in form_data:
             validated_data['preference_horaire'] = form_data['preference_horaire']
 
-        return super().create(validated_data)
+        instance = super().create(validated_data)
+
+        # Auto-escalade du statut devis vers « en attente validation » sur cas complexes (brief)
+        if instance.apply_devis_auto_validation():
+            instance.save(update_fields=['devis_statut'])
+
+        return instance
 
     def update(self, instance, validated_data):
         self._stamp_parts_repartition(instance, validated_data)
@@ -373,6 +379,10 @@ class DemandeSerializer(serializers.ModelSerializer):
                     
         instance = super().update(instance, validated_data)
 
+        # Auto-escalade du statut devis vers « en attente validation » sur cas complexes (brief)
+        if instance.apply_devis_auto_validation():
+            instance.save(update_fields=['devis_statut'])
+
         # ─── WhatsApp / Document Integration ───
         if regenerer_devis or envoyer_whatsapp:
             doc_type = 'devis' if (instance.segment == 'entreprise' or instance.is_devis) else 'png'
@@ -413,8 +423,12 @@ class DemandeSerializer(serializers.ModelSerializer):
                         
                         # Variables based on the proposed templates
                         if doc_type == 'devis':
-                            template = 'envoi_devis_client'
-                            vars = [client_name, f"D-{instance.id:05d}", instance.service]
+                            if getattr(settings, 'BYPASS_NEW_WA_TEMPLATES', False):
+                                template = 'envoi_devis_client'
+                                vars = [client_name, instance.devis_numero(), instance.service]
+                            else:
+                                from .utils.devis_templates import get_devis_template
+                                template, vars = get_devis_template(instance, client_name)
                             wa_media_type = 'document'
                         else:
                             template = 'envoi_resume_client'
@@ -471,7 +485,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'client', 'service', 'segment', 'source', 'statut', 'frequency',
             'frequency_label', 'date_intervention', 'heure_intervention',
-            'prix', 'is_devis', 'mode_paiement', 'statut_paiement', 
+            'prix', 'is_devis', 'devis_statut', 'mode_paiement', 'statut_paiement',
             'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
             'part_agence', 'parts_repartition',
             'statut_paiement_ui', 'montant_ht', 'montant_ttc', 'montant_verse',
@@ -753,3 +767,17 @@ class AuditLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = AuditLog
         fields = '__all__'
+
+
+class FeteReligieuseSerializer(serializers.ModelSerializer):
+    type_display = serializers.CharField(source='get_type_display', read_only=True)
+    debut_suspension = serializers.DateField(read_only=True)
+    fin_suspension = serializers.DateField(read_only=True)
+
+    class Meta:
+        model = FeteReligieuse
+        fields = [
+            'id', 'type', 'type_display', 'date', 'annee',
+            'jours_avant', 'jours_apres', 'actif',
+            'debut_suspension', 'fin_suspension',
+        ]

@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404
 from django.db.models import Model
 from django.db.models import Q
-from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse
 from .utils.document_generators import generate_devis_pdf, generate_recap_png
 import datetime
 import mimetypes
@@ -19,7 +19,7 @@ from .serializers import (
     DemandeSerializer, DemandeListSerializer,
     NRPLogSerializer, DocumentSerializer,
     PublicDemandeCreateSerializer, AuditLogSerializer, DemandeHistoriqueSerializer,
-    SubscriptionPlanningSerializer, AppNotificationSerializer
+    SubscriptionPlanningSerializer, AppNotificationSerializer, FeteReligieuseSerializer
 )
 from accounts.serializers import UserSerializer
 from .filters import DemandeFilter
@@ -507,9 +507,15 @@ class DemandeViewSet(viewsets.ModelViewSet):
         prix_display = _get_prix_display()
 
         if doc_type == 'devis':
-            template = 'envoi_devis_client'
-            vars = [client_name, f"D-{demande.id:05d}", demande.service]
-            
+            if BYPASS_NEW_TEMPLATES:
+                # Garde-fou : template générique unique si les templates par service
+                # ne sont pas encore validés dans 360dialog.
+                template = 'envoi_devis_client'
+                vars = [client_name, demande.devis_numero(), demande.service]
+            else:
+                from .utils.devis_templates import get_devis_template
+                template, vars = get_devis_template(demande, client_name)
+
         elif doc_type == 'png':
             template = 'envoi_resume_client'
             vars = [
@@ -1273,3 +1279,35 @@ def handle_auto_cloning_of_planning_interventions(demande, planning_obj):
                         time_val = time_val[:5]
                     clone_demand_for_date_time(demande, current_date, time_val)
                 current_date += datetime.timedelta(days=1)
+
+
+class FeteReligieusePermission(IsAuthenticated):
+    """Lecture pour tout utilisateur authentifié (les fêtes servent aux calculs),
+    écriture réservée à l'admin ou au rôle disposant de `parametres_globaux`."""
+    def has_permission(self, request, view):
+        if not super().has_permission(request, view):
+            return False
+        from rest_framework.permissions import SAFE_METHODS
+        if request.method in SAFE_METHODS:
+            return True
+        user = request.user
+        if getattr(user, 'role', None) == 'admin':
+            return True
+        from accounts.models import RolePermission
+        from accounts.permissions import map_role_to_db_key
+        rp = RolePermission.objects.filter(role=map_role_to_db_key(user.role)).first()
+        perms = rp.permissions if rp else []
+        return 'parametres_globaux' in perms
+
+
+class FeteReligieuseViewSet(viewsets.ModelViewSet):
+    """CRUD du calendrier des fêtes religieuses (Paramètres > Jours fériés)."""
+    serializer_class = FeteReligieuseSerializer
+    permission_classes = [FeteReligieusePermission]
+
+    def get_queryset(self):
+        qs = FeteReligieuse.objects.all()
+        annee = self.request.query_params.get('annee')
+        if annee:
+            qs = qs.filter(annee=annee)
+        return qs
