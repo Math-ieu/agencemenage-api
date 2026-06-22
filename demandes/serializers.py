@@ -60,6 +60,7 @@ class AppNotificationSerializer(serializers.ModelSerializer):
 class DemandeSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_phone = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    client_whatsapp = serializers.CharField(write_only=True, required=False, allow_blank=True)
     client_detail = ClientListSerializer(source='client', read_only=True)
     potential_duplicate_detail = ClientListSerializer(source='potential_duplicate_client', read_only=True)
     assigned_to_detail = UserSerializer(source='assigned_to', read_only=True)
@@ -73,11 +74,19 @@ class DemandeSerializer(serializers.ModelSerializer):
     profils_envoyes = AgentListSerializer(many=True, read_only=True)
     geste_commercial = serializers.SerializerMethodField()
     planning = SubscriptionPlanningSerializer(read_only=True)
+    nb_heures = serializers.SerializerMethodField()
+    nb_intervenants = serializers.SerializerMethodField()
 
     class Meta:
         model = Demande
         fields = '__all__'
-        extra_fields = ['reste_a_payer', 'geste_commercial']
+        extra_fields = ['reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants']
+
+    def get_nb_heures(self, obj):
+        return (obj.formulaire_data or {}).get('duree') or (obj.formulaire_data or {}).get('nb_heures') or (obj.formulaire_data or {}).get('duration') or 0
+
+    def get_nb_intervenants(self, obj):
+        return (obj.formulaire_data or {}).get('nb_intervenants') or (obj.formulaire_data or {}).get('nb_personnel') or (obj.formulaire_data or {}).get('numberOfPeople') or 1
 
     def _stamp_parts_repartition(self, instance, validated_data):
         from django.utils import timezone
@@ -216,8 +225,43 @@ class DemandeSerializer(serializers.ModelSerializer):
 
     def create(self, validated_data):
         self._stamp_parts_repartition(None, validated_data)
+        
+        # Synchronize cleaner/personnel count and duration fields inside formulaire_data
+        form_data = validated_data.get('formulaire_data')
+        if isinstance(form_data, dict):
+            cleaner_count = None
+            for key in ['nb_intervenants', 'nb_personnel', 'numberOfPeople', 'nb_intervenantes']:
+                val = form_data.get(key)
+                if val is not None:
+                    try:
+                        cleaner_count = int(val)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            if cleaner_count is not None:
+                form_data['nb_intervenants'] = cleaner_count
+                form_data['nb_personnel'] = cleaner_count
+                form_data['numberOfPeople'] = cleaner_count
+                form_data['nb_intervenantes'] = cleaner_count
+
+            duration_count = None
+            for key in ['duree', 'nb_heures', 'duration', 'heures']:
+                val = form_data.get(key)
+                if val is not None:
+                    try:
+                        duration_count = int(val)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            if duration_count is not None:
+                form_data['duree'] = duration_count
+                form_data['nb_heures'] = duration_count
+                form_data['duration'] = duration_count
+                form_data['heures'] = duration_count
+
         client_name = validated_data.pop('client_name', '').strip()
         client_phone = validated_data.pop('client_phone', '').strip()
+        client_whatsapp = validated_data.pop('client_whatsapp', '').strip()
         
         # Identification Logic
         id_statut = Demande.ID_NOUVELLE
@@ -236,7 +280,7 @@ class DemandeSerializer(serializers.ModelSerializer):
                 'entity_name': client_name if validated_data.get('segment') == Client.ENTREPRISE else '',
             }
             form_data = validated_data.get('formulaire_data', {})
-            whatsapp = form_data.get('whatsapp_phone', '')
+            whatsapp = client_whatsapp or form_data.get('whatsapp_phone', '')
             if whatsapp:
                 defaults['whatsapp'] = whatsapp
             email = form_data.get('email', '')
@@ -248,6 +292,13 @@ class DemandeSerializer(serializers.ModelSerializer):
                 defaults['neighborhood'] = form_data.get('quartier')
             if form_data.get('adresse'):
                 defaults['address'] = form_data.get('adresse')
+            
+            contact_person = form_data.get('contact_person') or form_data.get('contactPerson')
+            if contact_person:
+                defaults['contact_person'] = contact_person
+            entity_name = form_data.get('entity_name') or form_data.get('entityName')
+            if entity_name:
+                defaults['entity_name'] = entity_name
 
             if client_phone:
                 # 1. Search for existing client by phone
@@ -264,6 +315,28 @@ class DemandeSerializer(serializers.ModelSerializer):
                         # Confirmed match
                         client = existing_client
                         id_statut = Demande.ID_EXISTANT
+                        
+                        # Update existing client with new info
+                        if client_name:
+                            if validated_data.get('segment') == Client.PARTICULIER:
+                                client.last_name = client_name
+                            else:
+                                client.entity_name = client_name
+                        if client_whatsapp:
+                            client.whatsapp = client_whatsapp
+                        if email:
+                            client.email = email
+                        if form_data.get('ville'):
+                            client.city = form_data.get('ville')
+                        if form_data.get('quartier'):
+                            client.neighborhood = form_data.get('quartier')
+                        if form_data.get('adresse'):
+                            client.address = form_data.get('adresse')
+                        if contact_person:
+                            client.contact_person = contact_person
+                        if entity_name:
+                            client.entity_name = entity_name
+                        client.save()
                         
                         # Automatic Ownership / Assignment
                         if existing_client.assigned_commercial:
@@ -320,44 +393,85 @@ class DemandeSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         self._stamp_parts_repartition(instance, validated_data)
+        
+        # Synchronize cleaner/personnel count and duration fields inside formulaire_data
+        form_data = validated_data.get('formulaire_data')
+        if isinstance(form_data, dict):
+            cleaner_count = None
+            for key in ['nb_intervenants', 'nb_personnel', 'numberOfPeople', 'nb_intervenantes']:
+                val = form_data.get(key)
+                if val is not None:
+                    try:
+                        cleaner_count = int(val)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            if cleaner_count is not None:
+                form_data['nb_intervenants'] = cleaner_count
+                form_data['nb_personnel'] = cleaner_count
+                form_data['numberOfPeople'] = cleaner_count
+                form_data['nb_intervenantes'] = cleaner_count
+
+            duration_count = None
+            for key in ['duree', 'nb_heures', 'duration', 'heures']:
+                val = form_data.get(key)
+                if val is not None:
+                    try:
+                        duration_count = int(val)
+                        break
+                    except (ValueError, TypeError):
+                        continue
+            if duration_count is not None:
+                form_data['duree'] = duration_count
+                form_data['nb_heures'] = duration_count
+                form_data['duration'] = duration_count
+                form_data['heures'] = duration_count
+
         client_name = validated_data.pop('client_name', None)
         client_phone = validated_data.pop('client_phone', None)
+        client_whatsapp = validated_data.pop('client_whatsapp', None)
         
         # Pop non-model fields
         regenerer_devis = validated_data.pop('regenerer_devis', False)
         envoyer_whatsapp = validated_data.pop('envoyer_whatsapp', False)
         
-        if client_phone is not None or client_name is not None:
-            if instance.client:
-                if client_name is not None:
-                    instance.client.last_name = client_name
-                    instance.client.first_name = ""  # Prevent duplication when BO provides full name
-                if client_phone is not None:
-                    instance.client.phone = client_phone
-                
-                form_data = validated_data.get('formulaire_data', {})
-                whatsapp = form_data.get('whatsapp_phone', '')
-                if whatsapp:
-                    instance.client.whatsapp = whatsapp
-                email = form_data.get('email', '')
-                if email:
-                    instance.client.email = email
-                
-                if form_data.get('ville'):
-                    instance.client.city = form_data.get('ville')
-                if form_data.get('quartier'):
-                    instance.client.neighborhood = form_data.get('quartier')
-                if form_data.get('adresse'):
-                    instance.client.address = form_data.get('adresse')
-                    
-                instance.client.save()
-            else:
+        if client_phone is not None or client_name is not None or client_whatsapp is not None:
+            if not instance.client:
                 from clients.models import Client
-                defaults = {'last_name': client_name or ''}
                 if client_phone:
-                    instance.client, _ = Client.objects.get_or_create(phone=client_phone, defaults=defaults)
+                    instance.client, _ = Client.objects.get_or_create(phone=client_phone)
                 else:
-                    instance.client = Client.objects.create(**defaults)
+                    instance.client = Client.objects.create()
+            
+            # Now we are guaranteed to have instance.client
+            if client_name is not None:
+                instance.client.last_name = client_name
+                instance.client.first_name = ""  # Prevent duplication when BO provides full name
+            if client_phone is not None:
+                instance.client.phone = client_phone
+            if client_whatsapp is not None:
+                instance.client.whatsapp = client_whatsapp
+            
+            form_data = validated_data.get('formulaire_data', {})
+            email = form_data.get('email', '')
+            if email is not None:
+                instance.client.email = email
+            
+            if form_data.get('ville'):
+                instance.client.city = form_data.get('ville')
+            if form_data.get('quartier'):
+                instance.client.neighborhood = form_data.get('quartier')
+            if form_data.get('adresse'):
+                instance.client.address = form_data.get('adresse')
+                
+            contact_person = form_data.get('contact_person') or form_data.get('contactPerson')
+            if contact_person:
+                instance.client.contact_person = contact_person
+            entity_name = form_data.get('entity_name') or form_data.get('entityName')
+            if entity_name:
+                instance.client.entity_name = entity_name
+                
+            instance.client.save()
         
         if 'formulaire_data' in validated_data:
             if 'preference_horaire' in validated_data['formulaire_data']:
@@ -456,6 +570,9 @@ class DemandeListSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source='client.display_name', read_only=True)
     client_phone = serializers.CharField(source='client.phone', read_only=True)
     client_whatsapp = serializers.CharField(source='client.whatsapp', read_only=True)
+    client_email = serializers.CharField(source='client.email', read_only=True)
+    client_entity = serializers.CharField(source='client.entity_name', read_only=True)
+    client_contact = serializers.CharField(source='client.contact_person', read_only=True)
     client_city = serializers.CharField(source='client.city', read_only=True)
     client_neighborhood = serializers.CharField(source='client.neighborhood', read_only=True)
     client_address = serializers.CharField(source='client.address', read_only=True)
@@ -479,6 +596,8 @@ class DemandeListSerializer(serializers.ModelSerializer):
     montant_profil_annulation = serializers.SerializerMethodField()
     geste_commercial = serializers.SerializerMethodField()
     planning = SubscriptionPlanningSerializer(read_only=True)
+    nb_heures = serializers.SerializerMethodField()
+    nb_intervenants = serializers.SerializerMethodField()
 
     class Meta:
         model = Demande
@@ -492,11 +611,18 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'montant_agence_doit_profil', 'montant_profil_doit_agence',
             'annulation_raison', 'profil_sera_paye', 'montant_profil_annulation',
             'formulaire_data', 'created_at', 'preference_horaire',
-            'client_name', 'client_phone', 'client_whatsapp',
+            'client_name', 'client_phone', 'client_whatsapp', 'client_email', 'client_entity', 'client_contact',
             'client_city', 'client_neighborhood', 'client_address',
             'assigned_to', 'assigned_to_name', 'assigned_to_operations', 'assigned_to_operations_name', 'created_by', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
-            'note_commercial', 'note_operationnel', 'geste_commercial', 'planning', 'parent_demande'
+            'note_commercial', 'note_operationnel', 'geste_commercial', 'planning', 'parent_demande',
+            'nb_heures', 'nb_intervenants'
         ]
+
+    def get_nb_heures(self, obj):
+        return (obj.formulaire_data or {}).get('duree') or (obj.formulaire_data or {}).get('nb_heures') or (obj.formulaire_data or {}).get('duration') or 0
+
+    def get_nb_intervenants(self, obj):
+        return (obj.formulaire_data or {}).get('nb_intervenants') or (obj.formulaire_data or {}).get('nb_personnel') or (obj.formulaire_data or {}).get('numberOfPeople') or 1
 
     def _get_facturation_field(self, obj, field, default=None):
         return (obj.formulaire_data or {}).get('facturation', {}).get(field, default)
@@ -733,6 +859,27 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
                 # Confirmed match
                 client = existing_client
                 id_statut = Demande.ID_EXISTANT
+                
+                # Update existing client info
+                if client_data['last_name']:
+                    client.last_name = client_data['last_name']
+                if client_data['first_name']:
+                    client.first_name = client_data['first_name']
+                if client_data['whatsapp']:
+                    client.whatsapp = client_data['whatsapp']
+                if client_data['email']:
+                    client.email = client_data['email']
+                if client_data['city']:
+                    client.city = client_data['city']
+                if client_data['neighborhood']:
+                    client.neighborhood = client_data['neighborhood']
+                if client_data['address']:
+                    client.address = client_data['address']
+                if client_data['entity_name']:
+                    client.entity_name = client_data['entity_name']
+                if client_data.get('contact_person'):
+                    client.contact_person = client_data['contact_person']
+                client.save()
                 
                 # Auto-assign to existing commercial
                 if existing_client.assigned_commercial:
