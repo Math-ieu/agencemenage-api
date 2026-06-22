@@ -568,6 +568,12 @@ class DemandeListSerializer(serializers.ModelSerializer):
 
 class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source='client.display_name', read_only=True)
+    client_phone = serializers.CharField(source='client.phone', read_only=True)
+    client_whatsapp = serializers.CharField(source='client.whatsapp', read_only=True)
+    client_city = serializers.CharField(source='client.city', read_only=True)
+    client_neighborhood = serializers.CharField(source='client.neighborhood', read_only=True)
+    client_address = serializers.CharField(source='client.address', read_only=True)
+    assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True)
     profil_name = serializers.SerializerMethodField()
     profil_id = serializers.SerializerMethodField()
     statut_besoin_label = serializers.SerializerMethodField()
@@ -581,6 +587,13 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'id',
             'client',
             'client_name',
+            'client_phone',
+            'client_whatsapp',
+            'client_city',
+            'client_neighborhood',
+            'client_address',
+            'assigned_to',
+            'assigned_to_name',
             'service',
             'segment',
             'statut',

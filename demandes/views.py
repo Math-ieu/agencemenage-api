@@ -144,7 +144,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def historique(self, request):
-        queryset = Demande.objects.select_related('client').prefetch_related('profils_envoyes').order_by('-created_at')
+        queryset = Demande.objects.select_related('client', 'assigned_to').prefetch_related('profils_envoyes').order_by('-created_at')
 
         search = (request.query_params.get('search') or '').strip()
         if search:
