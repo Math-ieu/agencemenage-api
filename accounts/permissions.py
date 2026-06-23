@@ -191,10 +191,17 @@ class RoleBasedPermission(permissions.BasePermission):
                 return (
                     has_perm('modifier_facture') or 
                     has_perm('editer_facture') or 
-                    has_perm('mouvements_caisse')
+                    has_perm('mouvements_caisse') or
+                    has_perm('creer_mouvements_tresorerie')
                 )
             if action in ['list', 'retrieve']:
-                return has_perm('consulter_factures') or has_perm('voir_la_caisse') or has_perm('mouvements_caisse')
+                return (
+                    has_perm('consulter_factures') or 
+                    has_perm('voir_la_caisse') or 
+                    has_perm('mouvements_caisse') or
+                    has_perm('consulter_tresorerie') or
+                    has_perm('consulter_dus_agences_profils')
+                )
 
         # 7. Retours clients / Feedback (FeedbackViewSet)
         if view_name == 'FeedbackViewSet':
