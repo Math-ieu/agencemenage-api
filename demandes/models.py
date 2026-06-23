@@ -593,7 +593,7 @@ class FeteReligieuse(models.Model):
         (MAWLID, 'Mawlid Ennabawi'),
     ]
 
-    type = models.CharField(max_length=20, choices=TYPE_CHOICES, verbose_name="Fête")
+    type = models.CharField(max_length=100, verbose_name="Fête")
     date = models.DateField(verbose_name="Date de la fête")
     annee = models.IntegerField(verbose_name="Année")
     jours_avant = models.PositiveIntegerField(default=1, verbose_name="Jours suspendus avant")
@@ -610,6 +610,10 @@ class FeteReligieuse(models.Model):
 
     def __str__(self):
         return f"{self.get_type_display()} — {self.date}"
+
+    def get_type_display(self):
+        mapping = dict(self.TYPE_CHOICES)
+        return mapping.get(self.type, self.type)
 
     @property
     def debut_suspension(self):
