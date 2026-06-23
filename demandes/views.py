@@ -280,10 +280,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
         """Annuler une demande."""
         demande = self.get_object()
         avis = request.data.get('avis_annulation', '')
+        cancel_type = request.data.get('cancel_type', 'besoin')
+        if cancel_type == 'intervention':
+            demande._only_cancel_intervention = True
         demande.statut = Demande.ANNULE
         demande.avis_annulation = avis
         demande.save()
-        self._log_action(request.user, 'annuler', demande)
+        self._log_action(request.user, 'annuler', demande, extra_data={'cancel_type': cancel_type})
         return Response(DemandeSerializer(demande).data)
 
     @action(detail=True, methods=['post'])

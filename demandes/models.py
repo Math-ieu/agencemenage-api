@@ -514,6 +514,9 @@ def log_demande_creation(sender, instance, created, **kwargs):
 
 @receiver(pre_save, sender=Demande)
 def handle_demande_cancellation(sender, instance, **kwargs):
+    if getattr(instance, '_only_cancel_intervention', False):
+        return
+
     is_cancelled = False
     if not instance.pk:
         if instance.statut == Demande.ANNULE:
@@ -561,18 +564,23 @@ def handle_demande_cancellation(sender, instance, **kwargs):
 def cancel_related_missions(sender, instance, **kwargs):
     if instance.statut == Demande.ANNULE:
         from missions.models import Mission
-        Mission.objects.filter(demande=instance).update(
-            statut=Mission.ANNULEE,
-            montant_paye=0,
-            montant_encaisse_profil=0,
-            paiement_client_statut=Mission.PAIEMENT_ANNULE,
-            part_profil_versee=False,
-            part_agence_reversee=False,
-            profil_sera_paye=False,
-            montant_profil_annulation=0,
-            montant_agence_doit_profil=0,
-            montant_profil_doit_agence=0
-        )
+        if getattr(instance, '_only_cancel_intervention', False):
+            Mission.objects.filter(demande=instance).update(
+                statut=Mission.ANNULEE
+            )
+        else:
+            Mission.objects.filter(demande=instance).update(
+                statut=Mission.ANNULEE,
+                montant_paye=0,
+                montant_encaisse_profil=0,
+                paiement_client_statut=Mission.PAIEMENT_ANNULE,
+                part_profil_versee=False,
+                part_agence_reversee=False,
+                profil_sera_paye=False,
+                montant_profil_annulation=0,
+                montant_agence_doit_profil=0,
+                montant_profil_doit_agence=0
+            )
 
 
 

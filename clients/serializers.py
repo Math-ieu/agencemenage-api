@@ -42,7 +42,8 @@ class ClientListSerializer(serializers.ModelSerializer):
                 'facturation_annulee': facturation_annulee,
                 'commercial': latest.assigned_to.full_name if latest.assigned_to else None,
                 'created_at': latest.created_at,
-                'cao': latest.cao
+                'cao': latest.cao,
+                'frequency': latest.frequency
             }
         return None
 
