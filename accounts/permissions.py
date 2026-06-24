@@ -378,16 +378,16 @@ class RoleBasedPermission(permissions.BasePermission):
             if request.method in ['GET', 'HEAD', 'OPTIONS']:
                 if 'consulter_clients' in permissions_list:
                     return True
-            from django.db.models import Q
-            is_concerned = (
-                obj.assigned_commercial == user or
-                obj.demandes.filter(
-                    Q(created_by=user) |
-                    Q(assigned_to=user) |
-                    Q(assigned_to_operations=user)
-                ).exists()
-            )
-            return is_concerned
+                from django.db.models import Q
+                return (
+                    obj.assigned_commercial == user or
+                    obj.demandes.filter(
+                        Q(created_by=user) |
+                        Q(assigned_to=user) |
+                        Q(assigned_to_operations=user)
+                    ).exists()
+                )
+            return obj.assigned_commercial == user
             
         # 3. FeedbackViewSet
         if view_name == 'FeedbackViewSet':
