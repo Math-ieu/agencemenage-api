@@ -160,6 +160,7 @@ class RoleBasedPermission(permissions.BasePermission):
                     has_perm('creer_valider_demande') or
                     has_perm('modifier_demande') or 
                     has_perm('editer_besoin') or 
+                    has_perm('editer_besoin_agence') or 
                     has_perm('editer_besoin_facture') or 
                     has_perm('modifier_facture')
                 )
@@ -293,6 +294,7 @@ class RoleBasedPermission(permissions.BasePermission):
                 has_perm = (
                     'modifier_demande' in permissions_list or 
                     'editer_besoin' in permissions_list or 
+                    'editer_besoin_agence' in permissions_list or 
                     'modifier_facture' in permissions_list or 
                     'editer_besoin_facture' in permissions_list
                 )
