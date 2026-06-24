@@ -132,7 +132,7 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
                 permissions_list = []
                 
             has_consulter_caisse = any(p in permissions_list for p in [
-                'voir_la_caisse', 'mouvements_caisse', 'consulter_tresorerie'
+                'mouvements_caisse', 'consulter_tresorerie', 'consulter_solde_caisse', 'sorties_caisse'
             ])
             if not has_consulter_caisse:
                 from django.db.models import Q

@@ -203,6 +203,13 @@ class RoleBasedPermission(permissions.BasePermission):
                     has_perm('creer_mouvements_tresorerie')
                 )
             if action in ['list', 'retrieve']:
+                if view_name == 'EntreeCaisseViewSet':
+                    return (
+                        has_perm('mouvements_caisse') or
+                        has_perm('consulter_tresorerie') or
+                        has_perm('consulter_solde_caisse') or
+                        has_perm('sorties_caisse')
+                    )
                 return (
                     has_perm('consulter_factures') or 
                     has_perm('voir_la_caisse') or 
@@ -452,7 +459,7 @@ class RoleBasedPermission(permissions.BasePermission):
                 return True
             if request.method in ['GET', 'HEAD', 'OPTIONS']:
                 has_consulter_caisse = any(p in permissions_list for p in [
-                    'voir_la_caisse', 'mouvements_caisse', 'consulter_tresorerie'
+                    'mouvements_caisse', 'consulter_tresorerie', 'consulter_solde_caisse', 'sorties_caisse'
                 ])
                 if has_consulter_caisse:
                     return True
