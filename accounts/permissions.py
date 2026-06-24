@@ -20,6 +20,13 @@ def map_role_to_db_key(role):
         return 'Opérationnel'
     return role
 
+
+def is_exempt_from_ownership(user):
+    if not user or not user.is_authenticated:
+        return False
+    return user.role in ['admin', 'moderateur', 'responsable_commercial']
+
+
 class RoleBasedPermission(permissions.BasePermission):
     message = "Vous n'avez pas l'autorisation d'effectuer cette action."
 
@@ -248,22 +255,104 @@ class RoleBasedPermission(permissions.BasePermission):
             return True
             
         view_name = view.__class__.__name__
+
+        # Fetch user permissions
+        from accounts.models import RolePermission
+        db_role = map_role_to_db_key(user.role)
+        try:
+            rp = RolePermission.objects.filter(role=db_role).first()
+            permissions_list = rp.permissions if rp else []
+        except Exception:
+            permissions_list = []
         
+        is_exempt = is_exempt_from_ownership(user)
+
         # 1. DemandeViewSet
         if view_name == 'DemandeViewSet':
             action = getattr(view, 'action', None)
-            # Fetch user permissions
-            from accounts.models import RolePermission
-            db_role = map_role_to_db_key(user.role)
-            try:
-                rp = RolePermission.objects.filter(role=db_role).first()
-                permissions_list = rp.permissions if rp else []
-            except Exception:
-                permissions_list = []
-                
             has_traiter = 'traiter_demandes_affectees' in permissions_list
             has_creer_valider = 'creer_valider_demande' in permissions_list
+            has_consulter_demandes = 'consulter_demandes' in permissions_list
+            has_consulter_dashboard = 'consulter_dashboard' in permissions_list
             
+            # If the request method is read-only (GET, HEAD, OPTIONS), allow if they have view permissions
+            if request.method in ['GET', 'HEAD', 'OPTIONS']:
+                if (has_consulter_demandes or 
+                    has_consulter_dashboard or 
+                    has_traiter or 
+                    has_creer_valider):
+                    return True
+
+            is_concerned = (
+                obj.created_by == user or
+                obj.assigned_to == user or
+                obj.assigned_to_operations == user
+            )
+
+            if action in ['update', 'partial_update']:
+                has_perm = (
+                    'modifier_demande' in permissions_list or 
+                    'editer_besoin' in permissions_list or 
+                    'modifier_facture' in permissions_list or 
+                    'editer_besoin_facture' in permissions_list
+                )
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'annuler':
+                has_perm = 'refuser_demande' in permissions_list or 'annulation_demande' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'confirmer_cao':
+                has_perm = 'confirmation_avant_operation' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'valider':
+                if is_exempt:
+                    return has_traiter or has_creer_valider
+                if obj.created_by == user and has_creer_valider:
+                    return True
+                if (obj.assigned_to == user or obj.assigned_to_operations == user) and has_traiter:
+                    return True
+                return False
+
+            elif action == 'affecter':
+                has_perm = 'affecter_commercial' in permissions_list or 'traiter_demandes_affectees' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'affecter_operations':
+                has_perm = 'assigner_charge_operation' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'nrp':
+                has_perm = 'consulter_demandes' in permissions_list or 'modifier_demande' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'destroy':
+                has_perm = 'supprimer_demande_dashboard' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'generate_document':
+                doc_type = request.data.get('type')
+                if doc_type == 'facture':
+                    has_perm = 'generer_facture' in permissions_list
+                elif doc_type == 'devis':
+                    has_perm = 'creer_devis' in permissions_list
+                else:
+                    has_perm = 'consulter_demandes' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+
+            elif action == 'send_whatsapp':
+                doc_type = request.data.get('type')
+                if doc_type == 'facture':
+                    has_perm = 'envoi_facture_client' in permissions_list
+                elif doc_type == 'feedback':
+                    has_perm = 'consulter_retours_qualite' in permissions_list or 'repondre_avis_clients' in permissions_list
+                elif doc_type == 'devis':
+                    has_perm = 'creer_devis' in permissions_list
+                else:
+                    has_perm = 'consulter_demandes' in permissions_list
+                return has_perm if is_exempt else (has_perm and is_concerned)
+                
             # Case A: Created by user
             if obj.created_by == user:
                 return has_creer_valider
@@ -274,7 +363,6 @@ class RoleBasedPermission(permissions.BasePermission):
                 
             # Case C: Unassigned website demand
             if obj.source == 'site' and obj.assigned_to is None:
-                # Can only view (retrieve) or assign (affecter)
                 if action in ['retrieve', 'affecter']:
                     return has_traiter
                 return False
@@ -283,7 +371,11 @@ class RoleBasedPermission(permissions.BasePermission):
             
         # 2. ClientViewSet
         if view_name == 'ClientViewSet':
-            # Check if user is concerned with this client
+            if is_exempt:
+                return True
+            if request.method in ['GET', 'HEAD', 'OPTIONS']:
+                if 'consulter_clients' in permissions_list:
+                    return True
             from django.db.models import Q
             is_concerned = (
                 obj.assigned_commercial == user or
@@ -297,7 +389,8 @@ class RoleBasedPermission(permissions.BasePermission):
             
         # 3. FeedbackViewSet
         if view_name == 'FeedbackViewSet':
-            # Check if user is concerned with the demand associated with feedback
+            if is_exempt:
+                return True
             demande = obj.demande or (obj.mission.demande if obj.mission else None)
             if not demande:
                 return False
@@ -310,7 +403,15 @@ class RoleBasedPermission(permissions.BasePermission):
             
         # 4. FactureViewSet
         if view_name == 'FactureViewSet':
-            # Check if user is concerned with the demand associated with invoice
+            if is_exempt:
+                return True
+            if request.method in ['GET', 'HEAD', 'OPTIONS']:
+                has_consulter_factures = any(p in permissions_list for p in [
+                    'consulter_factures', 'voir_la_caisse', 'mouvements_caisse', 
+                    'consulter_tresorerie', 'consulter_dus_agences_profils'
+                ])
+                if has_consulter_factures:
+                    return True
             demande = obj.demande
             if not demande:
                 return False
@@ -320,10 +421,18 @@ class RoleBasedPermission(permissions.BasePermission):
                 demande.assigned_to_operations == user
             )
             return is_concerned
-
+ 
         # 5. PaiementViewSet
         if view_name == 'PaiementViewSet':
-            # Check if user is concerned with the payment via invoice demand
+            if is_exempt:
+                return True
+            if request.method in ['GET', 'HEAD', 'OPTIONS']:
+                has_consulter_factures = any(p in permissions_list for p in [
+                    'consulter_factures', 'voir_la_caisse', 'mouvements_caisse', 
+                    'consulter_tresorerie', 'consulter_dus_agences_profils'
+                ])
+                if has_consulter_factures:
+                    return True
             facture = obj.facture
             if not facture or not facture.demande:
                 return False
@@ -334,15 +443,21 @@ class RoleBasedPermission(permissions.BasePermission):
                 demande.assigned_to_operations == user
             )
             return is_concerned
-
+ 
         # 6. EntreeCaisseViewSet
         if view_name == 'EntreeCaisseViewSet':
-            # Check if user is concerned with cash movement
+            if is_exempt:
+                return True
+            if request.method in ['GET', 'HEAD', 'OPTIONS']:
+                has_consulter_caisse = any(p in permissions_list for p in [
+                    'voir_la_caisse', 'mouvements_caisse', 'consulter_tresorerie'
+                ])
+                if has_consulter_caisse:
+                    return True
             from django.db.models import Q
             paiement = obj.paiement
             client = obj.client
             
-            # Check via payment
             if paiement and paiement.facture and paiement.facture.demande:
                 demande = paiement.facture.demande
                 if (demande.created_by == user or 
@@ -350,7 +465,6 @@ class RoleBasedPermission(permissions.BasePermission):
                     demande.assigned_to_operations == user):
                     return True
                     
-            # Check via client
             if client:
                 if (client.assigned_commercial == user or
                     client.demandes.filter(
@@ -360,5 +474,5 @@ class RoleBasedPermission(permissions.BasePermission):
                     ).exists()):
                     return True
             return False
-
+ 
         return True

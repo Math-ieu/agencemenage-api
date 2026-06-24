@@ -57,12 +57,17 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 
             has_traiter = 'traiter_demandes_affectees' in permissions_list
             has_creer_valider = 'creer_valider_demande' in permissions_list
+            has_consulter_demandes = 'consulter_demandes' in permissions_list
+            has_consulter_dashboard = 'consulter_dashboard' in permissions_list
             
-            conditions = Q(pk__in=[])
-            if has_creer_valider:
-                conditions |= Q(created_by=user)
-            if has_traiter:
-                conditions |= Q(assigned_to=user) | Q(assigned_to_operations=user) | Q(source='site', assigned_to__isnull=True)
+            if has_consulter_demandes or has_consulter_dashboard:
+                conditions = Q()
+            else:
+                conditions = Q(pk__in=[])
+                if has_creer_valider:
+                    conditions |= Q(created_by=user)
+                if has_traiter:
+                    conditions |= Q(assigned_to=user) | Q(assigned_to_operations=user) | Q(source='site', assigned_to__isnull=True)
                 
             qs = qs.filter(conditions)
         return qs

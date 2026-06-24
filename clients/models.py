@@ -121,6 +121,7 @@ def log_client_changes(sender, instance, **kwargs):
         'city': 'Ville',
         'neighborhood': 'Quartier',
         'address': 'Adresse',
+        'assigned_commercial': 'Commercial',
     }
     
     changes = []
@@ -128,8 +129,12 @@ def log_client_changes(sender, instance, **kwargs):
         old_val = getattr(old_instance, field, None)
         new_val = getattr(instance, field, None)
         
-        old_str = str(old_val or '').strip()
-        new_str = str(new_val or '').strip()
+        if field == 'assigned_commercial':
+            old_str = old_val.full_name if old_val else ''
+            new_str = new_val.full_name if new_val else ''
+        else:
+            old_str = str(old_val or '').strip()
+            new_str = str(new_val or '').strip()
         
         if old_str != new_str:
             if field == 'segment':
@@ -148,4 +153,21 @@ def log_client_changes(sender, instance, **kwargs):
             details=details_str,
             user=get_current_user()
         )
+
+
+@receiver(pre_save, sender=Client)
+def detect_commercial_change(sender, instance, **kwargs):
+    if not instance.pk:
+        return
+    try:
+        old_instance = Client.objects.get(pk=instance.pk)
+        instance._commercial_changed = (instance.assigned_commercial != old_instance.assigned_commercial)
+    except Client.DoesNotExist:
+        pass
+
+
+@receiver(post_save, sender=Client)
+def sync_demandes_on_client_commercial_change(sender, instance, created, **kwargs):
+    if not created and getattr(instance, '_commercial_changed', False):
+        instance.demandes.all().update(assigned_to=instance.assigned_commercial)
 

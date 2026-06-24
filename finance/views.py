@@ -22,13 +22,28 @@ class FactureViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        if user and user.is_authenticated and user.role != 'admin':
-            from django.db.models import Q
-            qs = qs.filter(
-                Q(demande__created_by=user) |
-                Q(demande__assigned_to=user) |
-                Q(demande__assigned_to_operations=user)
-            )
+        from accounts.permissions import is_exempt_from_ownership
+        if user and user.is_authenticated and not is_exempt_from_ownership(user):
+            from accounts.models import RolePermission
+            from accounts.permissions import map_role_to_db_key
+            db_role = map_role_to_db_key(user.role)
+            try:
+                rp = RolePermission.objects.filter(role=db_role).first()
+                permissions_list = rp.permissions if rp else []
+            except Exception:
+                permissions_list = []
+                
+            has_consulter_factures = any(p in permissions_list for p in [
+                'consulter_factures', 'voir_la_caisse', 'mouvements_caisse', 
+                'consulter_tresorerie', 'consulter_dus_agences_profils'
+            ])
+            if not has_consulter_factures:
+                from django.db.models import Q
+                qs = qs.filter(
+                    Q(demande__created_by=user) |
+                    Q(demande__assigned_to=user) |
+                    Q(demande__assigned_to_operations=user)
+                )
         return qs
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_fields = ['statut', 'client']
@@ -50,13 +65,28 @@ class PaiementViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        if user and user.is_authenticated and user.role != 'admin':
-            from django.db.models import Q
-            qs = qs.filter(
-                Q(facture__demande__created_by=user) |
-                Q(facture__demande__assigned_to=user) |
-                Q(facture__demande__assigned_to_operations=user)
-            )
+        from accounts.permissions import is_exempt_from_ownership
+        if user and user.is_authenticated and not is_exempt_from_ownership(user):
+            from accounts.models import RolePermission
+            from accounts.permissions import map_role_to_db_key
+            db_role = map_role_to_db_key(user.role)
+            try:
+                rp = RolePermission.objects.filter(role=db_role).first()
+                permissions_list = rp.permissions if rp else []
+            except Exception:
+                permissions_list = []
+                
+            has_consulter_factures = any(p in permissions_list for p in [
+                'consulter_factures', 'voir_la_caisse', 'mouvements_caisse', 
+                'consulter_tresorerie', 'consulter_dus_agences_profils'
+            ])
+            if not has_consulter_factures:
+                from django.db.models import Q
+                qs = qs.filter(
+                    Q(facture__demande__created_by=user) |
+                    Q(facture__demande__assigned_to=user) |
+                    Q(facture__demande__assigned_to_operations=user)
+                )
         return qs
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['mode', 'facture']
@@ -90,17 +120,31 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         queryset = super().get_queryset().select_related('client', 'created_by')
-        if user and user.is_authenticated and user.role != 'admin':
-            from django.db.models import Q
-            queryset = queryset.filter(
-                Q(paiement__facture__demande__created_by=user) |
-                Q(paiement__facture__demande__assigned_to=user) |
-                Q(paiement__facture__demande__assigned_to_operations=user) |
-                Q(client__assigned_commercial=user) |
-                Q(client__demandes__created_by=user) |
-                Q(client__demandes__assigned_to=user) |
-                Q(client__demandes__assigned_to_operations=user)
-            ).distinct()
+        from accounts.permissions import is_exempt_from_ownership
+        if user and user.is_authenticated and not is_exempt_from_ownership(user):
+            from accounts.models import RolePermission
+            from accounts.permissions import map_role_to_db_key
+            db_role = map_role_to_db_key(user.role)
+            try:
+                rp = RolePermission.objects.filter(role=db_role).first()
+                permissions_list = rp.permissions if rp else []
+            except Exception:
+                permissions_list = []
+                
+            has_consulter_caisse = any(p in permissions_list for p in [
+                'voir_la_caisse', 'mouvements_caisse', 'consulter_tresorerie'
+            ])
+            if not has_consulter_caisse:
+                from django.db.models import Q
+                queryset = queryset.filter(
+                    Q(paiement__facture__demande__created_by=user) |
+                    Q(paiement__facture__demande__assigned_to=user) |
+                    Q(paiement__facture__demande__assigned_to_operations=user) |
+                    Q(client__assigned_commercial=user) |
+                    Q(client__demandes__created_by=user) |
+                    Q(client__demandes__assigned_to=user) |
+                    Q(client__demandes__assigned_to_operations=user)
+                ).distinct()
 
         caisse_type = self.request.query_params.get('caisse_type', 'caisse')
         queryset = queryset.filter(caisse_type=caisse_type)
@@ -135,7 +179,7 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
     def solde(self, request):
         """Calcule le solde total de la caisse/trésorerie."""
         caisse_type = request.query_params.get('caisse_type', 'caisse')
-        qs = EntreeCaisse.objects.filter(caisse_type=caisse_type)
+        qs = self.get_queryset().filter(caisse_type=caisse_type)
         entrees = qs.filter(type_mouvement='entree').aggregate(t=Sum('montant'))['t'] or 0
         sorties = qs.filter(type_mouvement='sortie').aggregate(t=Sum('montant'))['t'] or 0
         alimentations = qs.filter(type_mouvement='alimentation').aggregate(t=Sum('montant'))['t'] or 0

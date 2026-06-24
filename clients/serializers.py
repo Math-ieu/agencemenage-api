@@ -18,6 +18,7 @@ class ClientListSerializer(serializers.ModelSerializer):
     display_name = serializers.ReadOnlyField()
     demandes_count = serializers.IntegerField(source='demandes.count', read_only=True)
     latest_demande = serializers.SerializerMethodField()
+    assigned_commercial_name = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
@@ -25,8 +26,12 @@ class ClientListSerializer(serializers.ModelSerializer):
             'id', 'display_name', 'first_name', 'last_name', 'entity_name',
             'phone', 'email', 'segment', 'city', 'neighborhood', 'address', 
             'created_at', 'demandes_count', 'latest_demande',
-            'avis_commercial', 'avis_operationnel', 'is_blacklisted'
+            'avis_commercial', 'avis_operationnel', 'is_blacklisted',
+            'assigned_commercial', 'assigned_commercial_name'
         ]
+
+    def get_assigned_commercial_name(self, obj):
+        return obj.assigned_commercial.full_name if obj.assigned_commercial else None
 
     def get_latest_demande(self, obj):
         latest = obj.demandes.order_by('-created_at').first()

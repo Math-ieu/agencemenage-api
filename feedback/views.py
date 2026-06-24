@@ -33,16 +33,18 @@ class FeedbackViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        if user and user.is_authenticated and user.role != 'admin':
-            from django.db.models import Q
-            qs = qs.filter(
-                Q(demande__created_by=user) |
-                Q(demande__assigned_to=user) |
-                Q(demande__assigned_to_operations=user) |
-                Q(mission__demande__created_by=user) |
-                Q(mission__demande__assigned_to=user) |
-                Q(mission__demande__assigned_to_operations=user)
-            ).distinct()
+        if user and user.is_authenticated:
+            from accounts.permissions import is_exempt_from_ownership
+            if not is_exempt_from_ownership(user):
+                from django.db.models import Q
+                qs = qs.filter(
+                    Q(demande__created_by=user) |
+                    Q(demande__assigned_to=user) |
+                    Q(demande__assigned_to_operations=user) |
+                    Q(mission__demande__created_by=user) |
+                    Q(mission__demande__assigned_to=user) |
+                    Q(mission__demande__assigned_to_operations=user)
+                ).distinct()
             
         city = self.request.query_params.get('city')
         if city:
@@ -65,11 +67,19 @@ class FeedbackViewSet(viewsets.ModelViewSet):
 
     @action(detail=False, methods=['get'])
     def stats(self, request):
-        # KPI: Total finished prestations
-        total_finished = Demande.objects.filter(statut='pres_terminee').count()
+        user = request.user
+        from accounts.permissions import is_exempt_from_ownership
+        if user and user.is_authenticated and not is_exempt_from_ownership(user):
+            total_finished = Demande.objects.filter(
+                Q(created_by=user) |
+                Q(assigned_to=user) |
+                Q(assigned_to_operations=user)
+            ).filter(statut='pres_terminee').distinct().count()
+            all_feedbacks = self.get_queryset()
+        else:
+            total_finished = Demande.objects.filter(statut='pres_terminee').count()
+            all_feedbacks = Feedback.objects.all()
         
-        # KPI: Feedbacks counts
-        all_feedbacks = Feedback.objects.all()
         positives = all_feedbacks.filter(Q(note_agence__gte=4) | Q(note_intervenant__gte=4)).count()
         negatives = all_feedbacks.filter(Q(note_agence__lte=2) | Q(note_intervenant__lte=2)).count()
 

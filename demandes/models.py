@@ -644,3 +644,29 @@ class FeteReligieuse(models.Model):
                 if f.couvre(d):
                     return f
         return None
+
+
+@receiver(pre_save, sender=Demande)
+def sync_commercial_on_demande_update(sender, instance, **kwargs):
+    if not instance.pk:
+        return
+    try:
+        old_instance = Demande.objects.get(pk=instance.pk)
+    except Demande.DoesNotExist:
+        return
+    
+    if instance.assigned_to != old_instance.assigned_to:
+        client = instance.client
+        if client:
+            client.assigned_commercial = instance.assigned_to
+            client.save(update_fields=['assigned_commercial'])
+            client.demandes.exclude(pk=instance.pk).update(assigned_to=instance.assigned_to)
+
+
+@receiver(post_save, sender=Demande)
+def sync_commercial_on_demande_creation(sender, instance, created, **kwargs):
+    if created and instance.created_by and instance.client:
+        client = instance.client
+        client.assigned_commercial = instance.created_by
+        client.save(update_fields=['assigned_commercial'])
+        client.demandes.exclude(pk=instance.pk).update(assigned_to=instance.created_by)
