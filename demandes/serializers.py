@@ -725,6 +725,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     statut_paiement_ui = serializers.SerializerMethodField()
     motif = serializers.SerializerMethodField()
     cao = CAOField(required=False)
+    planning = SubscriptionPlanningSerializer(read_only=True)
 
     class Meta:
         model = Demande
@@ -760,7 +761,9 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'parent_demande',
             'frequency',
             'frequency_label',
+            'planning',
         ]
+
 
     def get_profil_name(self, obj):
         profile = obj.profils_envoyes.order_by('id').first()
