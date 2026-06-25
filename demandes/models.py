@@ -176,7 +176,12 @@ class Demande(models.Model):
     formulaire_data = models.JSONField(default=dict, blank=True)
 
     # Confirmation avant opération
-    cao = models.BooleanField(default=False, verbose_name="Confirmation avant opération")
+    cao = models.CharField(
+        max_length=20,
+        default='non',
+        choices=[('non', 'Non'), ('oui', 'Oui'), ('reporte', 'Reporté')],
+        verbose_name="Confirmation avant opération"
+    )
     
     # Gestion des parts
     part_agence = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Part agence")
@@ -258,6 +263,13 @@ class Demande(models.Model):
             self.devis_statut = self.DEVIS_EN_ATTENTE_VALIDATION
             return True
         return False
+
+    def save(self, *args, **kwargs):
+        if self.cao is True or self.cao == 'True':
+            self.cao = 'oui'
+        elif self.cao is False or self.cao == 'False' or not self.cao:
+            self.cao = 'non'
+        super().save(*args, **kwargs)
 
     class Meta:
         verbose_name = 'Demande'

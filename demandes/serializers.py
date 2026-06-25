@@ -9,6 +9,22 @@ from accounts.serializers import UserSerializer
 from agents.serializers import AgentListSerializer
 
 
+class CAOField(serializers.Field):
+    def to_representation(self, value):
+        if value in [True, 'True', 'oui']:
+            return True
+        if value in [False, 'False', 'non']:
+            return False
+        return value
+
+    def to_internal_value(self, data):
+        if data is True or data == 'true' or data == True:
+            return 'oui'
+        if data is False or data == 'false' or data == False:
+            return 'non'
+        return data
+
+
 class DocumentSerializer(serializers.ModelSerializer):
     # URL sécurisée qui n'expose JAMAIS le chemin réel du fichier
     download_url = serializers.SerializerMethodField()
@@ -76,6 +92,7 @@ class DemandeSerializer(serializers.ModelSerializer):
     planning = SubscriptionPlanningSerializer(read_only=True)
     nb_heures = serializers.SerializerMethodField()
     nb_intervenants = serializers.SerializerMethodField()
+    cao = CAOField(required=False)
 
     class Meta:
         model = Demande
@@ -598,6 +615,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     planning = SubscriptionPlanningSerializer(read_only=True)
     nb_heures = serializers.SerializerMethodField()
     nb_intervenants = serializers.SerializerMethodField()
+    cao = CAOField(required=False)
 
     class Meta:
         model = Demande
@@ -706,6 +724,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     statut_paiement_label = serializers.SerializerMethodField()
     statut_paiement_ui = serializers.SerializerMethodField()
     motif = serializers.SerializerMethodField()
+    cao = CAOField(required=False)
 
     class Meta:
         model = Demande
