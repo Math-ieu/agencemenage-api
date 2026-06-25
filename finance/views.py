@@ -146,8 +146,9 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
                     Q(client__demandes__assigned_to_operations=user)
                 ).distinct()
 
-        caisse_type = self.request.query_params.get('caisse_type', 'caisse')
-        queryset = queryset.filter(caisse_type=caisse_type)
+        if self.action not in ['retrieve', 'update', 'partial_update', 'destroy']:
+            caisse_type = self.request.query_params.get('caisse_type', 'caisse')
+            queryset = queryset.filter(caisse_type=caisse_type)
 
         search = self.request.query_params.get('search')
         date_from = self.request.query_params.get('date_from')
