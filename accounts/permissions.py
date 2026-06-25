@@ -24,7 +24,7 @@ def map_role_to_db_key(role):
 def is_exempt_from_ownership(user):
     if not user or not user.is_authenticated:
         return False
-    return user.role in ['admin', 'moderateur', 'responsable_commercial']
+    return user.role in ['admin', 'moderateur', 'responsable_commercial', 'responsable_operations']
 
 
 class RoleBasedPermission(permissions.BasePermission):
@@ -111,9 +111,21 @@ class RoleBasedPermission(permissions.BasePermission):
                 
             if action in ['update', 'partial_update']:
                 is_blacklisting = 'is_blacklisted' in request.data
-                if is_blacklisting:
-                    return has_perm('blacklister_agents')
-                return has_perm('modifier_agents')
+                is_assigning = 'assigned_to' in request.data
+                
+                has_modify = has_perm('modifier_agents')
+                has_assign = has_perm('assigner_charge_profil')
+                has_blacklist = has_perm('blacklister_agents')
+                
+                if is_blacklisting and not has_blacklist:
+                    return False
+                if is_assigning and not has_assign:
+                    return False
+                    
+                other_fields = [k for k in request.data.keys() if k not in ['assigned_to', 'is_blacklisted']]
+                if other_fields and not has_modify:
+                    return False
+                return True
                 
             if action == 'create':
                 return has_perm('creer_agents')
@@ -125,6 +137,9 @@ class RoleBasedPermission(permissions.BasePermission):
         if view_name == 'DemandeViewSet':
             if action == 'destroy':
                 return has_perm('supprimer_demande_dashboard')
+                
+            if action == 'envoyer_profil':
+                return has_perm('postuler_demande')
                 
             if action == 'valider':
                 # Allowed at view level, will check ownership/assignment in has_object_permission
@@ -296,6 +311,11 @@ class RoleBasedPermission(permissions.BasePermission):
                 obj.assigned_to == user or
                 obj.assigned_to_operations == user
             )
+
+            if action == 'envoyer_profil':
+                if 'postuler_demande' not in permissions_list:
+                    return False
+                return True if is_exempt else is_concerned
 
             if action in ['update', 'partial_update']:
                 has_perm = (

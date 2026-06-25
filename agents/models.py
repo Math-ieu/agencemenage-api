@@ -77,6 +77,14 @@ class Agent(models.Model):
     fiche_antropometrique = models.FileField(upload_to='agents/fiches_antropometriques/', blank=True, null=True)
     is_archived = models.BooleanField(default=False, db_index=True)
     is_blacklisted = models.BooleanField(default=False, db_index=True, verbose_name="Blacklisté")
+    assigned_to = models.ForeignKey(
+        'accounts.User',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='assigned_agents',
+        verbose_name="Chargé assigné"
+    )
 
     class Meta:
         verbose_name = 'Agent / Profil'

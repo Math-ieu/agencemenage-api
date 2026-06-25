@@ -667,6 +667,11 @@ class DemandeViewSet(viewsets.ModelViewSet):
         except Agent.DoesNotExist:
             return Response({'error': 'Profil introuvable'}, status=404)
         
+        # Restriction pour le rôle chargé d'opérations
+        if request.user.role == 'charge_operations':
+            if agent.assigned_to != request.user:
+                return Response({'error': "Vous ne pouvez postuler que les profils qui vous sont assignés."}, status=403)
+
         if not demande.profils_envoyes.filter(pk=agent.pk).exists():
             demande.profils_envoyes.add(agent)
             

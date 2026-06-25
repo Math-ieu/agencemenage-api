@@ -17,6 +17,7 @@ class AgentSerializer(serializers.ModelSerializer):
     experiences = AgentExperienceSerializer(many=True, required=False)
     average_rating = serializers.ReadOnlyField()
     is_assigned_active = serializers.SerializerMethodField()
+    assigned_to_name = serializers.ReadOnlyField(source='assigned_to.full_name', default=None)
 
     class Meta:
         model = Agent
@@ -73,6 +74,9 @@ class AgentSerializer(serializers.ModelSerializer):
     def create(self, validated_data):
         request = self.context.get('request')
         experiences_data = self._get_experiences_data(request) if request else []
+        
+        if request and request.user and not validated_data.get('assigned_to'):
+            validated_data['assigned_to'] = request.user
             
         agent = Agent.objects.create(**validated_data)
         
@@ -98,10 +102,13 @@ class AgentSerializer(serializers.ModelSerializer):
 
 class AgentListSerializer(serializers.ModelSerializer):
     average_rating = serializers.ReadOnlyField()
+    assigned_to_name = serializers.ReadOnlyField(source='assigned_to.full_name', default=None)
+    
     class Meta:
         model = Agent
         fields = [
             'id', 'uuid', 'first_name', 'last_name', 'full_name', 'phone', 'whatsapp',
             'poste', 'statut', 'city', 'neighborhood', 'experience', 
-            'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating', 'is_blacklisted'
+            'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating', 'is_blacklisted',
+            'assigned_to', 'assigned_to_name'
         ]
