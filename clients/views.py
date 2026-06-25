@@ -2,8 +2,8 @@ from rest_framework import viewsets, filters
 from rest_framework.response import Response
 from rest_framework.decorators import action
 from django_filters.rest_framework import DjangoFilterBackend
-from .models import Client, ClientActionLog
-from .serializers import ClientSerializer, ClientListSerializer, ClientActionLogSerializer
+from .models import Client, ClientActionLog, ClientCommercialAssignment
+from .serializers import ClientSerializer, ClientListSerializer, ClientActionLogSerializer, ClientCommercialAssignmentSerializer
 from .filters import ClientFilter
 
 
@@ -65,13 +65,30 @@ class ClientViewSet(viewsets.ModelViewSet):
         """Affecter le client à un commercial."""
         client = self.get_object()
         commercial_id = request.data.get('commercial_id')
-        if not commercial_id:
-            return Response({'error': 'commercial_id requis'}, status=400)
-        from accounts.models import User
-        try:
-            commercial = User.objects.get(pk=commercial_id, is_active=True)
-        except User.DoesNotExist:
-            return Response({'error': 'Commercial introuvable'}, status=404)
+        commercial = None
+        if commercial_id:
+            from accounts.models import User
+            try:
+                commercial = User.objects.get(pk=commercial_id, is_active=True)
+            except User.DoesNotExist:
+                return Response({'error': 'Commercial introuvable'}, status=404)
         client.assigned_commercial = commercial
         client.save()
+
+        ClientCommercialAssignment.objects.create(
+            client=client,
+            commercial=commercial,
+            assigned_by=request.user if request.user.is_authenticated else None,
+            assigned_by_name=request.data.get('assigned_by_name', ''),
+            notes=request.data.get('notes', '')
+        )
         return Response(ClientSerializer(client).data)
+
+    @action(detail=True, methods=['get'])
+    def assignments(self, request, pk=None):
+        """Retourner l'historique des affectations pour ce client."""
+        client = self.get_object()
+        assignments = client.assignments.all().order_by('-created_at')
+        serializer = ClientCommercialAssignmentSerializer(assignments, many=True)
+        return Response(serializer.data)
+

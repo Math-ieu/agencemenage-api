@@ -171,3 +171,30 @@ def sync_demandes_on_client_commercial_change(sender, instance, created, **kwarg
     if not created and getattr(instance, '_commercial_changed', False):
         instance.demandes.all().update(assigned_to=instance.assigned_commercial)
 
+
+class ClientCommercialAssignment(models.Model):
+    client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='assignments')
+    commercial = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='client_assignments'
+    )
+    assigned_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='created_assignments'
+    )
+    assigned_by_name = models.CharField(max_length=255, blank=True)
+    notes = models.TextField(blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Affectation Commercial Client'
+        verbose_name_plural = 'Affectations Commerciaux Client'
+
+

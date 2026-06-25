@@ -55,7 +55,7 @@ class ClientListSerializer(serializers.ModelSerializer):
             }
         return None
 
-from .models import ClientActionLog
+from .models import ClientActionLog, ClientCommercialAssignment
 
 class ClientActionLogSerializer(serializers.ModelSerializer):
     user_name = serializers.CharField(source='user.full_name', read_only=True)
@@ -63,3 +63,18 @@ class ClientActionLogSerializer(serializers.ModelSerializer):
     class Meta:
         model = ClientActionLog
         fields = ['id', 'action', 'details', 'user', 'user_name', 'created_at']
+
+
+class ClientCommercialAssignmentSerializer(serializers.ModelSerializer):
+    commercial_name = serializers.ReadOnlyField(source='commercial.full_name', default='Non affecté')
+    assigned_by_name_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = ClientCommercialAssignment
+        fields = ['id', 'commercial', 'commercial_name', 'assigned_by', 'assigned_by_name_display', 'notes', 'created_at']
+
+    def get_assigned_by_name_display(self, obj):
+        if obj.assigned_by_name:
+            return obj.assigned_by_name
+        return obj.assigned_by.full_name if obj.assigned_by else '—'
+
