@@ -36,7 +36,6 @@ class FeedbackViewSet(viewsets.ModelViewSet):
         if user and user.is_authenticated:
             from accounts.permissions import is_exempt_from_ownership
             if not is_exempt_from_ownership(user):
-                from django.db.models import Q
                 qs = qs.filter(
                     Q(demande__created_by=user) |
                     Q(demande__assigned_to=user) |
