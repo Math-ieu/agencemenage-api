@@ -11,12 +11,12 @@ class ClientSerializer(serializers.ModelSerializer):
         fields = '__all__'
 
     def get_demandes_count(self, obj):
-        return obj.demandes.count()
+        return obj.demandes.filter(parent_demande__isnull=True).count()
 
 
 class ClientListSerializer(serializers.ModelSerializer):
     display_name = serializers.ReadOnlyField()
-    demandes_count = serializers.IntegerField(source='demandes.count', read_only=True)
+    demandes_count = serializers.SerializerMethodField()
     latest_demande = serializers.SerializerMethodField()
     assigned_commercial_name = serializers.SerializerMethodField()
 
@@ -32,6 +32,9 @@ class ClientListSerializer(serializers.ModelSerializer):
 
     def get_assigned_commercial_name(self, obj):
         return obj.assigned_commercial.full_name if obj.assigned_commercial else None
+
+    def get_demandes_count(self, obj):
+        return obj.demandes.filter(parent_demande__isnull=True).count()
 
     def get_latest_demande(self, obj):
         latest = obj.demandes.order_by('-created_at').first()
