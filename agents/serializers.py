@@ -1,6 +1,6 @@
 from django.db import models
 from rest_framework import serializers
-from .models import Agent, AgentExperience
+from .models import Agent, AgentExperience, AgentAssignment
 from demandes.models import Demande
 
 
@@ -112,3 +112,21 @@ class AgentListSerializer(serializers.ModelSerializer):
             'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating', 'is_blacklisted',
             'assigned_to', 'assigned_to_name'
         ]
+
+
+class AgentAssignmentSerializer(serializers.ModelSerializer):
+    assigned_to_name = serializers.ReadOnlyField(source='assigned_to.full_name', default='Non affecté')
+    assigned_by_name_display = serializers.SerializerMethodField()
+
+    class Meta:
+        model = AgentAssignment
+        fields = [
+            'id', 'assigned_to', 'assigned_to_name', 'assigned_by', 
+            'assigned_by_name_display', 'notes', 'created_at'
+        ]
+
+    def get_assigned_by_name_display(self, obj):
+        if obj.assigned_by_name:
+            return obj.assigned_by_name
+        return obj.assigned_by.full_name if obj.assigned_by else '—'
+

@@ -22,6 +22,7 @@ from finance.views import FactureViewSet, PaiementViewSet, EntreeCaisseViewSet
 from feedback.views import FeedbackViewSet
 from blog.views import CategoryViewSet, PostViewSet
 from media.views import MediaFileView
+from marketing.views import PublicPromoCodeValidateView
 
 # Router
 router = DefaultRouter()
@@ -65,6 +66,7 @@ urlpatterns = [
     path('api/public/demandes/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demande_create'),
     path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
     path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
+    path('api/public/promos/validate/', PublicPromoCodeValidateView.as_view(), name='public_promos_validate'),
 
     # OpenAPI docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

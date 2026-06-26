@@ -93,11 +93,13 @@ class DemandeSerializer(serializers.ModelSerializer):
     nb_heures = serializers.SerializerMethodField()
     nb_intervenants = serializers.SerializerMethodField()
     cao = CAOField(required=False)
+    promo_code_name = serializers.CharField(source='promo_code.name', read_only=True)
+    promo_code_code = serializers.CharField(source='promo_code.code', read_only=True)
 
     class Meta:
         model = Demande
         fields = '__all__'
-        extra_fields = ['reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants']
+        extra_fields = ['reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants', 'promo_code_name', 'promo_code_code']
 
     def get_nb_heures(self, obj):
         return (obj.formulaire_data or {}).get('duree') or (obj.formulaire_data or {}).get('nb_heures') or (obj.formulaire_data or {}).get('duration') or 0
@@ -616,6 +618,8 @@ class DemandeListSerializer(serializers.ModelSerializer):
     nb_heures = serializers.SerializerMethodField()
     nb_intervenants = serializers.SerializerMethodField()
     cao = CAOField(required=False)
+    promo_code_name = serializers.CharField(source='promo_code.name', read_only=True)
+    promo_code_code = serializers.CharField(source='promo_code.code', read_only=True)
 
     class Meta:
         model = Demande
@@ -633,7 +637,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'client_city', 'client_neighborhood', 'client_address',
             'assigned_to', 'assigned_to_name', 'assigned_to_operations', 'assigned_to_operations_name', 'created_by', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
             'note_commercial', 'note_operationnel', 'geste_commercial', 'planning', 'parent_demande',
-            'nb_heures', 'nb_intervenants'
+            'nb_heures', 'nb_intervenants', 'promo_code', 'promo_code_name', 'promo_code_code'
         ]
 
     def get_nb_heures(self, obj):
@@ -726,6 +730,8 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     motif = serializers.SerializerMethodField()
     cao = CAOField(required=False)
     planning = SubscriptionPlanningSerializer(read_only=True)
+    promo_code_name = serializers.CharField(source='promo_code.name', read_only=True)
+    promo_code_code = serializers.CharField(source='promo_code.code', read_only=True)
 
     class Meta:
         model = Demande
@@ -762,6 +768,9 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'frequency',
             'frequency_label',
             'planning',
+            'promo_code',
+            'promo_code_name',
+            'promo_code_code',
         ]
 
 
@@ -842,10 +851,20 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
             'formulaire_data',
             'client_nom', 'client_prenom', 'client_phone', 'client_email',
             'client_whatsapp', 'client_ville', 'client_quartier', 'client_address', 'client_entity',
+            'promo_code',
         ]
 
     def create(self, validated_data):
         from clients.models import Client
+
+        # Resolve promo code if any
+        promo_code = validated_data.pop('promo_code', None)
+        if not promo_code:
+            form_data = validated_data.get('formulaire_data', {})
+            promo_code_code = form_data.get('promoCodeInput') if isinstance(form_data, dict) else None
+            if promo_code_code:
+                from marketing.models import PromoCode
+                promo_code = PromoCode.objects.filter(code=str(promo_code_code).strip().upper(), archived=False, status='active').first()
 
         # Extract client fields
         client_data = {
@@ -931,8 +950,33 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
                 client.assigned_commercial = validated_data['assigned_to']
             client.save()
 
+        # Enforce validation on promo_code if provided
+        if promo_code:
+            # 1. Check limit_uses
+            if promo_code.limit_uses is not None and promo_code.uses >= promo_code.limit_uses:
+                raise serializers.ValidationError({
+                    "promo_code": "Ce code promo a atteint sa limite d'utilisation."
+                })
+                
+            # 2. Check targeted client for BD promo codes
+            if promo_code.promo_type == 'bd':
+                if not promo_code.matches_client(client):
+                    status_display = promo_code.customer_status.lower()
+                    raise serializers.ValidationError({
+                        "promo_code": f"Ce code promo est réservé aux cibles ({status_display})."
+                    })
+                    
+            # 3. Check one use per client
+            if promo_code.one_use_per_client and client:
+                # Note: We check if there are any existing demands with this promo code
+                if client.demandes.filter(promo_code=promo_code).exists():
+                    raise serializers.ValidationError({
+                        "promo_code": "Vous avez déjà utilisé ce code promo."
+                    })
+
         demande = Demande.objects.create(
             client=client,
+            promo_code=promo_code,
             source=Demande.SITE,
             mode_paiement=Demande.VIREMENT,
             statut=Demande.EN_ATTENTE,

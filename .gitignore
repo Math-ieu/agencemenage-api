@@ -209,3 +209,5 @@ __marimo__/
 wipe_data.py
 wipe_database.py
 test_send_wa.py
+marketing/tests.py
+

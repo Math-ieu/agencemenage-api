@@ -96,6 +96,7 @@ class Demande(models.Model):
 
     # Core fields
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='demandes', null=True, blank=True)
+    promo_code = models.ForeignKey('marketing.PromoCode', on_delete=models.SET_NULL, null=True, blank=True, related_name='demandes')
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

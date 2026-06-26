@@ -1,8 +1,8 @@
 from rest_framework import viewsets, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.permissions import IsAuthenticated, AllowAny
-from .models import Agent
-from .serializers import AgentSerializer, AgentListSerializer
+from .models import Agent, AgentAssignment
+from .serializers import AgentSerializer, AgentListSerializer, AgentAssignmentSerializer
 from .filters import AgentFilter
 from demandes.models import AuditLog, ProfilShare
 from rest_framework.decorators import action
@@ -105,6 +105,38 @@ class AgentViewSet(viewsets.ModelViewSet):
         
         from demandes.serializers import AuditLogSerializer
         serializer = AuditLogSerializer(combined_logs, many=True)
+        return Response(serializer.data)
+
+    @action(detail=True, methods=['post'])
+    def affecter(self, request, pk=None):
+        """Affecter l'agent à un chargé des opérations."""
+        agent = self.get_object()
+        assigned_to_id = request.data.get('assigned_to_id')
+        assigned_to = None
+        if assigned_to_id:
+            from accounts.models import User
+            try:
+                assigned_to = User.objects.get(pk=assigned_to_id, is_active=True)
+            except User.DoesNotExist:
+                return Response({'error': 'Utilisateur introuvable'}, status=404)
+        agent.assigned_to = assigned_to
+        agent.save()
+
+        AgentAssignment.objects.create(
+            agent=agent,
+            assigned_to=assigned_to,
+            assigned_by=request.user if request.user.is_authenticated else None,
+            assigned_by_name=request.data.get('assigned_by_name', ''),
+            notes=request.data.get('notes', '')
+        )
+        return Response(AgentSerializer(agent).data)
+
+    @action(detail=True, methods=['get'])
+    def assignments(self, request, pk=None):
+        """Retourner l'historique des affectations pour ce profil."""
+        agent = self.get_object()
+        assignments = agent.assignments.all().order_by('-created_at')
+        serializer = AgentAssignmentSerializer(assignments, many=True)
         return Response(serializer.data)
 
     @action(detail=False, methods=['get'], permission_classes=[AllowAny], url_path='by-share/(?P<share_uuid>[^/.]+)')
