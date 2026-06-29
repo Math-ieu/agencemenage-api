@@ -543,6 +543,9 @@ def handle_demande_cancellation(sender, instance, **kwargs):
             pass
 
     if is_cancelled:
+        new_fact = instance.formulaire_data.get('facturation', {}) if isinstance(instance.formulaire_data, dict) else {}
+        is_explicit_fact_cancel = isinstance(new_fact, dict) and new_fact.get('facturation_annulee') is True
+
         instance.prix = 0
         instance.part_agence = 0
         instance.parts_repartition = []
@@ -564,13 +567,18 @@ def handle_demande_cancellation(sender, instance, **kwargs):
         fact['montant_agence_doit_profil'] = 0
         fact['montant_profil_doit_agence'] = 0
         fact['parts_repartition'] = []
-        fact['statut_paiement_ui'] = 'facturation_annulee'
-        fact['facturation_annulee'] = True
-        fact['profil_sera_paye'] = False
-        fact['montant_profil_annulation'] = 0
+        
+        if is_explicit_fact_cancel:
+            fact['statut_paiement_ui'] = 'facturation_annulee'
+            fact['facturation_annulee'] = True
+        else:
+            fact['statut_paiement_ui'] = 'annule'
+            fact['facturation_annulee'] = False
+            fact['profil_sera_paye'] = False
+            fact['montant_profil_annulation'] = 0
 
         instance.formulaire_data['facturation'] = fact
-        instance.formulaire_data['statut_paiement_ui'] = 'facturation_annulee'
+        instance.formulaire_data['statut_paiement_ui'] = fact['statut_paiement_ui']
 
 
 @receiver(post_save, sender=Demande)

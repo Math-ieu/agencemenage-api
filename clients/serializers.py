@@ -40,8 +40,14 @@ class ClientListSerializer(serializers.ModelSerializer):
         latest = obj.demandes.order_by('-created_at').first()
         if latest:
             fact = latest.formulaire_data.get('facturation', {}) if isinstance(latest.formulaire_data, dict) else {}
-            statut_paiement_ui = fact.get('statut_paiement_ui')
             facturation_annulee = fact.get('facturation_annulee', False)
+            statut_paiement_ui = fact.get('statut_paiement_ui')
+            
+            if facturation_annulee and latest.statut == 'annule' and not fact.get('annulation_raison'):
+                facturation_annulee = False
+                if statut_paiement_ui == 'facturation_annulee':
+                    statut_paiement_ui = 'annule'
+
             return {
                 'id': latest.id,
                 'statut': latest.statut,

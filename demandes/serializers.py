@@ -650,7 +650,11 @@ class DemandeListSerializer(serializers.ModelSerializer):
         return (obj.formulaire_data or {}).get('facturation', {}).get(field, default)
 
     def get_statut_paiement_ui(self, obj):
-        return self._get_facturation_field(obj, 'statut_paiement_ui')
+        fact = (obj.formulaire_data or {}).get('facturation', {})
+        val = fact.get('statut_paiement_ui')
+        if val == 'facturation_annulee' and obj.statut == 'annule' and not fact.get('annulation_raison'):
+            return 'annule'
+        return val
 
     def get_montant_ht(self, obj):
         return self._get_facturation_field(obj, 'montant_ht', 0)
@@ -812,10 +816,17 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     def get_statut_paiement_ui(self, obj):
         facturation = (obj.formulaire_data or {}).get('facturation', {})
         ui_value = facturation.get('statut_paiement_ui')
+        fact_annulee = facturation.get('facturation_annulee', False)
+        
+        if fact_annulee and obj.statut == Demande.ANNULE and not facturation.get('annulation_raison'):
+            fact_annulee = False
+            if ui_value == 'facturation_annulee':
+                ui_value = 'annule'
+
         if ui_value:
             return ui_value
 
-        if facturation.get('facturation_annulee'):
+        if fact_annulee:
             return 'facturation_annulee'
         if obj.statut_paiement == Demande.INTEGRAL:
             return 'paye'
