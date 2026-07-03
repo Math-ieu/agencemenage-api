@@ -24,7 +24,7 @@ def map_role_to_db_key(role):
 def is_exempt_from_ownership(user):
     if not user or not user.is_authenticated:
         return False
-    return user.role in ['admin', 'moderateur', 'responsable_commercial', 'responsable_operations']
+    return user.role in ['admin', 'moderateur', 'responsable_commercial', 'responsable_operations', 'charge_operations']
 
 
 class RoleBasedPermission(permissions.BasePermission):
