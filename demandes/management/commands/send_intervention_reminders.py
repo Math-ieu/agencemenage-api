@@ -1,9 +1,109 @@
 import datetime
+import re
+import random
+import string
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.conf import settings
 from demandes.models import SubscriptionPlanning, AppNotification, Demande
 from demandes.utils.whatsapp import WhatsAppService
+
+def get_monday_py(d):
+    return d - datetime.timedelta(days=d.weekday())
+
+def calculate_end_time_py(start_time_str, dur_h):
+    if not start_time_str:
+        return ''
+    try:
+        parts = start_time_str.split(':')
+        h, m = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError):
+        return ''
+    import math
+    end_h = h + math.floor(dur_h)
+    end_m = m + round((dur_h % 1) * 60)
+    if end_m >= 60:
+        end_h += end_m // 60
+        end_m = end_m % 60
+    end_h = end_h % 24
+    return f"{end_h:02d}:{end_m:02d}"
+
+def get_frequency_count_py(flabel):
+    if not flabel:
+        return 1
+    match = re.match(r'^(\d+)/sem', flabel, re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    if flabel.lower().strip() == 'quotidien':
+        return 7
+    return 1
+
+def get_selected_days_for_frequency_py(jours_interv, fcount, start_dayk):
+    days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    sel = [d for d in jours_interv if d in days_order]
+    if len(sel) >= fcount:
+        return sel[:fcount]
+    try:
+        start_index = days_order.index(start_dayk)
+    except ValueError:
+        start_index = 0
+    for idx_offset in range(7):
+        idx = (start_index + idx_offset) % 7
+        day = days_order[idx]
+        if day not in sel:
+            sel.append(day)
+        if len(sel) == fcount:
+            break
+    return sel
+
+def generate_weeks_for_month_py(start_date, end_date, jours_intervention, heure_debut_str, nb_heures, frequency_label, month_index, start_week_index):
+    days_map = {0: 'lundi', 1: 'mardi', 2: 'mercredi', 3: 'jeudi', 4: 'vendredi', 5: 'samedi', 6: 'dimanche'}
+    start_day_key = days_map[start_date.weekday()]
+    fcount = get_frequency_count_py(frequency_label)
+    selected_days = get_selected_days_for_frequency_py(jours_intervention, fcount, start_day_key)
+    
+    duration = nb_heures or 2
+    start_hour = heure_debut_str or '09:00'
+    end_hour = calculate_end_time_py(start_hour, duration)
+    
+    weeks_list = []
+    current_monday = get_monday_py(start_date)
+    w_index = start_week_index
+    
+    while current_monday <= end_date:
+        week_debut_str = current_monday.isoformat()
+        sunday = current_monday + datetime.timedelta(days=6)
+        week_fin_str = sunday.isoformat()
+        
+        jours_dict = {}
+        days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+        
+        for offset, day_key in enumerate(days_order):
+            day_date = current_monday + datetime.timedelta(days=offset)
+            day_date_str = day_date.isoformat()
+            
+            is_selected = (day_key in selected_days and start_date <= day_date <= end_date)
+            
+            jours_dict[day_key] = {
+                'selected': is_selected,
+                'heure_debut': start_hour if is_selected else '',
+                'heure_fin': end_hour if is_selected else '',
+                'demande_id': None
+            }
+            
+        w_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=9))
+        weeks_list.append({
+            'id': w_id,
+            'label': f"Semaine {w_index}",
+            'date_debut': week_debut_str,
+            'date_fin': week_fin_str,
+            'termine': False,
+            'jours': jours_dict,
+            'mois': month_index
+        })
+        w_index += 1
+        current_monday += datetime.timedelta(days=7)
+    return weeks_list
 
 class Command(BaseCommand):
     help = "Envoie des rappels automatiques d'intervention 24h avant aux clients (WhatsApp) et à l'équipe Opérations (in-app)"
@@ -29,6 +129,96 @@ class Command(BaseCommand):
         
         count = 0
         for planning in plannings:
+            # 0. Normalization of weeks & Auto-renewal check
+            semaines = planning.semaines or []
+            if isinstance(semaines, list):
+                # Backwards compatibility: add 'mois' if missing
+                for w in semaines:
+                    if 'mois' not in w:
+                        w['mois'] = 1
+                planning.semaines = semaines
+
+            if isinstance(semaines, list) and len(semaines) > 0:
+                max_month = 1
+                max_date_fin = None
+                max_week_label_index = 0
+                
+                for w in semaines:
+                    m = w.get('mois', 1)
+                    if m > max_month:
+                        max_month = m
+                    
+                    w_fin = w.get('date_fin')
+                    if w_fin:
+                        try:
+                            d_fin = datetime.date.fromisoformat(w_fin)
+                            if max_date_fin is None or d_fin > max_date_fin:
+                                max_date_fin = d_fin
+                        except ValueError:
+                            pass
+                    
+                    match = re.match(r'Semaine\s+(\d+)', w.get('label', ''), re.IGNORECASE)
+                    if match:
+                        idx = int(match.group(1))
+                        if idx > max_week_label_index:
+                            max_week_label_index = idx
+                            
+                weeks_of_max_month = [w for w in semaines if w.get('mois', 1) == max_month]
+                all_weeks_completed = len(weeks_of_max_month) > 0 and all(w.get('termine', False) for w in weeks_of_max_month)
+                time_has_passed = max_date_fin and today > max_date_fin
+                
+                if all_weeks_completed or time_has_passed:
+                    next_month_index = max_month + 1
+                    start_week_label_index = max_week_label_index + 1
+                    
+                    if max_date_fin:
+                        new_start_date = max_date_fin + datetime.timedelta(days=1)
+                    else:
+                        new_start_date = planning.date_debut
+                        
+                    new_end_date = new_start_date + datetime.timedelta(days=29)
+                    
+                    demande = planning.demande
+                    jours_intervention = [j.lower().strip() for j in (planning.jours_intervention or [])]
+                    frequency_label = demande.frequency_label or '2/sem'
+                    heure_debut_str = planning.heure_debut.strftime('%H:%M') if planning.heure_debut else (demande.heure_intervention or '09:00')
+                    if len(heure_debut_str) > 5:
+                        heure_debut_str = heure_debut_str[:5]
+                        
+                    nb_heures = 2
+                    if isinstance(demande.formulaire_data, dict):
+                        nb_heures = demande.formulaire_data.get('duree') or demande.formulaire_data.get('nb_heures') or 2
+                        try:
+                            nb_heures = float(nb_heures)
+                        except (ValueError, TypeError):
+                            nb_heures = 2
+                            
+                    new_weeks = generate_weeks_for_month_py(
+                        start_date=new_start_date,
+                        end_date=new_end_date,
+                        jours_intervention=jours_intervention,
+                        heure_debut_str=heure_debut_str,
+                        nb_heures=nb_heures,
+                        frequency_label=frequency_label,
+                        month_index=next_month_index,
+                        start_week_index=start_week_label_index
+                    )
+                    
+                    semaines.extend(new_weeks)
+                    planning.semaines = semaines
+                    
+                    if len(new_weeks) > 0 and new_weeks[-1].get('date_fin'):
+                        try:
+                            planning.date_fin = datetime.date.fromisoformat(new_weeks[-1].get('date_fin'))
+                        except ValueError:
+                            planning.date_fin = new_end_date
+                    else:
+                        planning.date_fin = new_end_date
+                        
+                    planning.save()
+                    
+                    self.stdout.write(f"Planning ID {planning.id} (Client {demande.client.display_name if demande.client else 'Sans client'}): renouvellement automatique du Mois {next_month_index} (du {new_start_date.isoformat()} au {planning.date_fin.isoformat()})")
+
             # Check if tomorrow is one of the intervention days
             is_active_for_tomorrow = False
             heure_debut_obj = None
