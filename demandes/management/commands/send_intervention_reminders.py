@@ -217,6 +217,66 @@ class Command(BaseCommand):
                         
                     planning.save()
                     
+                    # 1. Update the price of the parent demand
+                    max_month = next_month_index
+                    prev_max_month = max_month - 1 if max_month > 1 else 1
+                    
+                    original_monthly_price = float(demande.prix) / prev_max_month if demande.prix else 0.0
+                    new_prix = original_monthly_price * max_month
+                    
+                    demande.prix = new_prix
+                    if isinstance(demande.formulaire_data, dict):
+                        facturation = demande.formulaire_data.get('facturation', {})
+                        tva_active = facturation.get('tva_active', False)
+                        
+                        montant_ttc = new_prix
+                        montant_ht = round(montant_ttc / 1.2, 2) if tva_active else montant_ttc
+                        
+                        facturation['montant_ttc'] = montant_ttc
+                        facturation['montant_ht'] = montant_ht
+                        facturation['montant'] = montant_ttc
+                        demande.formulaire_data['facturation'] = facturation
+                    demande.save(update_fields=['prix', 'formulaire_data'])
+
+                    # 2. Generate the invoice document for this new month
+                    try:
+                        from demandes.utils.document_helpers import generate_demande_document
+                        doc = generate_demande_document(demande, 'facture', month_index=next_month_index)
+                        
+                        # 3. Send the invoice via WhatsApp automatically
+                        client_phone = demande.client.phone if demande.client else None
+                        if not client_phone and isinstance(demande.formulaire_data, dict):
+                            client_phone = demande.formulaire_data.get('whatsapp_phone') or demande.formulaire_data.get('phone')
+                            
+                        if client_phone:
+                            client_name = demande.client.display_name if demande.client else demande.client_name or (demande.formulaire_data.get('nom', 'Client') if isinstance(demande.formulaire_data, dict) else 'Client')
+                            from demandes.utils.whatsapp import WhatsAppService
+                            
+                            formatted_total = f"{original_monthly_price:,.2f}".replace(",", " ")
+                            invoice_num = f"AM/F{demande.id:03d}-M{next_month_index}/{datetime.datetime.now().year}"
+                            service_display = f"{demande.service} - Mois {next_month_index}"
+                            
+                            media_url = f"{settings.API_BASE_URL}{doc.fichier.url}" if doc.fichier else None
+                            
+                            vars = [
+                                client_name,
+                                invoice_num,
+                                datetime.date.today().strftime('%d/%m/%Y'),
+                                service_display,
+                                formatted_total
+                            ]
+                            
+                            WhatsAppService.send_template_message(
+                                to=client_phone,
+                                template_name='facture_client',
+                                media_url=media_url,
+                                media_type='document',
+                                variables=vars
+                            )
+                            self.stdout.write(f"WhatsApp envoyé pour planning ID {planning.id} (Mois {next_month_index})")
+                    except Exception as ex:
+                        self.stderr.write(f"Erreur lors de la génération/envoi auto du document pour planning ID {planning.id}: {ex}")
+                    
                     self.stdout.write(f"Planning ID {planning.id} (Client {demande.client.display_name if demande.client else 'Sans client'}): renouvellement automatique du Mois {next_month_index} (du {new_start_date.isoformat()} au {planning.date_fin.isoformat()})")
 
             # Check if tomorrow is one of the intervention days
@@ -338,6 +398,7 @@ class Command(BaseCommand):
                         session_price_ht = round(session_price / 1.2, 2)
                     
                     new_formulaire_data = dict(demande.formulaire_data) if isinstance(demande.formulaire_data, dict) else {}
+                    new_formulaire_data['subscription_month'] = target_week.get('mois', 1) if target_week else 1
                     new_formulaire_data['frequence'] = demande.frequency_label or 'Abonnement'
                     new_formulaire_data['frequency'] = 'abonnement'
                     new_formulaire_data['date'] = tomorrow_str

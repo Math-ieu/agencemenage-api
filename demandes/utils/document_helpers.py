@@ -32,7 +32,7 @@ def resolve_frequency_label(demande):
     return raw or demande.get_frequency_display()
 
 
-def generate_demande_document(demande, doc_type, user=None):
+def generate_demande_document(demande, doc_type, user=None, month_index=None):
     """
     Logic to generate a document (devis or png) and save it.
     """
@@ -70,28 +70,44 @@ def generate_demande_document(demande, doc_type, user=None):
         filename = f"DEVIS_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
         db_content_type = Document.DEVIS
     elif doc_type == 'facture':
-        # Prepare Invoice items
-        items = [
-            InvoiceItem(demande.service, float(demande.prix or 0))
-        ]
-        
-        # Calculate invoice number
-        invoice_number = f"AM/F{demande.pk:03d}/{datetime.datetime.now().year}"
-        
+        if month_index:
+            try:
+                month_idx_int = int(month_index)
+            except (ValueError, TypeError):
+                month_idx_int = 1
+                
+            weeks = demande.planning.semaines if (demande.planning and demande.planning.semaines) else []
+            max_month = 1
+            for w in weeks:
+                if isinstance(w, dict) and w.get('mois', 1) > max_month:
+                    max_month = w.get('mois', 1)
+            
+            monthly_price = float(demande.prix) / max_month if (demande.prix and max_month > 0) else 0.0
+            items = [
+                InvoiceItem(f"{demande.service} - Mois {month_idx_int}", monthly_price)
+            ]
+            invoice_number = f"AM/F{demande.pk:03d}-M{month_idx_int}/{datetime.datetime.now().year}"
+            filename = f"FACTURE_{client_nom.replace(' ', '_')}_{demande.pk}_M{month_idx_int}.pdf"
+        else:
+            items = [
+                InvoiceItem(demande.service, float(demande.prix or 0))
+            ]
+            invoice_number = f"AM/F{demande.pk:03d}/{datetime.datetime.now().year}"
+            filename = f"FACTURE_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
+            
         invoice_data = InvoiceData(
             invoice_number=invoice_number,
             invoice_date=datetime.date.today(),
             client_name=client_nom,
             client_ice=form_data.get('ice', ''),
             client_address=client_adresse,
-            service_type=demande.service,
+            service_type=demande.service if not month_index else f"{demande.service} - Mois {month_index}",
             frequency=resolve_frequency_label(demande),
             items=items,
             tva_rate=0.20 if form_data.get('tva_active') else 0.00
         )
         
         content_bytes = generate_invoice(invoice_data).read()
-        filename = f"FACTURE_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
         db_content_type = Document.FACTURE
     else:
         content_bytes = generate_recap_png(data)

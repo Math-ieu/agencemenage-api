@@ -430,7 +430,8 @@ class DemandeViewSet(viewsets.ModelViewSet):
         
         try:
             from .utils.document_helpers import generate_demande_document
-            doc = generate_demande_document(demande, doc_type, user=request.user)
+            month_index = request.data.get('month_index')
+            doc = generate_demande_document(demande, doc_type, user=request.user, month_index=month_index)
             self._log_action(request.user, f'generate_{doc_type}', demande)
             return Response(DocumentSerializer(doc).data, status=status.HTTP_201_CREATED)
         except Exception as e:
@@ -475,7 +476,11 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 logger.info(f"WhatsApp: Using frontend-provided media_url: {media_url}")
             else:
                 # Priorité 2 : Construire l'URL depuis le dernier document en base
-                doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
+                month_index = request.data.get('month_index')
+                if month_index:
+                    doc = demande.documents.filter(type_document=doc_type, nom__icontains=f"M{month_index}").order_by('-created_at').first()
+                else:
+                    doc = demande.documents.filter(type_document=doc_type).order_by('-created_at').first()
 
                 if not doc:
                     return Response({'error': f'Aucun document de type "{doc_type}" trouvé. Veuillez d\'abord générer le document.'}, status=404)
@@ -536,15 +541,28 @@ class DemandeViewSet(viewsets.ModelViewSet):
             
         elif doc_type == 'facture':
             template = 'facture_client'
-            # Format price with thousands separator
-            formatted_total = f"{demande.prix:,.2f}".replace(",", " ") if demande.prix else prix_display
-            invoice_num = f"AM/F{demande.id:03d}/{datetime.datetime.now().year}"
+            month_index = request.data.get('month_index')
+            if month_index:
+                weeks = demande.planning.semaines if (demande.planning and demande.planning.semaines) else []
+                max_month = 1
+                for w in weeks:
+                    if isinstance(w, dict) and w.get('mois', 1) > max_month:
+                        max_month = w.get('mois', 1)
+                
+                monthly_price = float(demande.prix) / max_month if (demande.prix and max_month > 0) else 0.0
+                formatted_total = f"{monthly_price:,.2f}".replace(",", " ")
+                invoice_num = f"AM/F{demande.id:03d}-M{month_index}/{datetime.datetime.now().year}"
+                service_display = f"{demande.service} - Mois {month_index}"
+            else:
+                formatted_total = f"{demande.prix:,.2f}".replace(",", " ") if demande.prix else prix_display
+                invoice_num = f"AM/F{demande.id:03d}/{datetime.datetime.now().year}"
+                service_display = demande.service
             
             vars = [
                 client_name,
                 invoice_num,
                 datetime.date.today().strftime('%d/%m/%Y'),
-                demande.service,
+                service_display,
                 formatted_total
             ]
             
@@ -1213,6 +1231,29 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         session_price_ht = round(session_price / 1.2, 2)
     
     new_formulaire_data = dict(parent_demande.formulaire_data) if isinstance(parent_demande.formulaire_data, dict) else {}
+    
+    # Calculate subscription month
+    subscription_month = 1
+    try:
+        if parent_demande.planning:
+            for week in parent_demande.planning.semaines or []:
+                if not isinstance(week, dict):
+                    continue
+                w_start = week.get('date_debut')
+                w_end = week.get('date_fin')
+                if w_start and w_end:
+                    try:
+                        d_start = datetime.date.fromisoformat(w_start)
+                        d_end = datetime.date.fromisoformat(w_end)
+                        if d_start <= date_val <= d_end:
+                            subscription_month = week.get('mois', 1)
+                            break
+                    except (ValueError, TypeError):
+                        pass
+    except Exception:
+        pass
+
+    new_formulaire_data['subscription_month'] = subscription_month
     new_formulaire_data['frequence'] = parent_demande.frequency_label or 'Abonnement'
     new_formulaire_data['frequency'] = 'abonnement'
     new_formulaire_data['date'] = date_val.isoformat()
