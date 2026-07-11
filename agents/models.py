@@ -1,16 +1,19 @@
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 import uuid
 
 
 class Agent(models.Model):
     uuid = models.UUIDField(default=uuid.uuid4, editable=False, unique=True, db_index=True)
-    DISPONIBLE = 'disponible'
-    NON_DISPONIBLE = 'non_disponible'
 
     STATUT_CHOICES = [
-        (DISPONIBLE, 'Disponible'),
-        (NON_DISPONIBLE, 'Non disponible'),
+        ('nouveau', 'Nouveau'),
+        ('active', 'Active'),
+        ('blacklist', 'Blacklisté'),
+        ('stand_by', 'Stand by'),
+        ('en_conge', 'En congé'),
+        ('malade', 'Malade'),
     ]
 
     POSTE_CHOICES = [
@@ -50,8 +53,12 @@ class Agent(models.Model):
     health_issues = models.CharField(max_length=255, blank=True, verbose_name="Maladie / Handicap")
     physical_appearance = models.CharField(max_length=100, blank=True, verbose_name="Présentation physique")
     corpulence = models.CharField(max_length=100, blank=True, verbose_name="Corpulence")
+    allergy_animals = models.BooleanField(default=False, verbose_name="Allergie aux animaux")
+    shoe_size = models.CharField(max_length=10, blank=True, verbose_name="Pointure de chaussures")
+    is_smoking = models.BooleanField(default=False, verbose_name="Fume")
 
     # Availability
+    availability_calendar = models.JSONField(default=dict, blank=True)
     avail_emergencies = models.BooleanField(default=False, verbose_name="Disponible pour les urgences")
     avail_7_7 = models.BooleanField(default=False, verbose_name="7 jours / 7")
     avail_day = models.BooleanField(default=False, verbose_name="Journée (7h-18h)")
@@ -63,17 +70,35 @@ class Agent(models.Model):
     neighborhood = models.CharField(max_length=200, blank=True, verbose_name="Quartier")
 
     # Status
-    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default=DISPONIBLE)
+    statut = models.CharField(max_length=20, choices=STATUT_CHOICES, default='nouveau')
+    DISPONIBILITE_CHOICES = [
+        ('disponible', 'Disponible'),
+        ('non_disponible', 'Non disponible'),
+        ('occupee', 'Occupée (en mission)'),
+    ]
+    disponibilite_intervention = models.CharField(
+        max_length=20, 
+        choices=DISPONIBILITE_CHOICES, 
+        default='disponible', 
+        verbose_name="Disponibilité d'intervention"
+    )
+    standby_days = models.PositiveIntegerField(null=True, blank=True, verbose_name="Nombre de jours standby")
+    standby_until = models.DateField(null=True, blank=True, verbose_name="Standby jusqu'au")
+    leave_start = models.DateField(null=True, blank=True, verbose_name="Début de congé")
+    leave_end = models.DateField(null=True, blank=True, verbose_name="Fin de congé")
 
     # Meta
+    registration_date = models.DateField(default=timezone.now, verbose_name="Date d'enregistrement")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
     operator_notes = models.TextField(blank=True, verbose_name="Note de l'opérateur")
+    recruiter_notes = models.TextField(blank=True, verbose_name="Remarque du recruteur")
     photo = models.ImageField(upload_to='agents/photos/', blank=True, null=True)
     photo2 = models.ImageField(upload_to='agents/photos/', blank=True, null=True)
     photo3 = models.ImageField(upload_to='agents/photos/', blank=True, null=True)
-    active_photo = models.CharField(max_length=10, default='photo', choices=[('photo', 'Photo 1'), ('photo2', 'Photo 2'), ('photo3', 'Photo 3')])
+    active_photo = models.CharField(max_length=10, default='photo', choices=[('photo', 'Photo 1'), ('photo2', 'Photo 2')])
     cin_file = models.FileField(upload_to='agents/cin/', blank=True, null=True)
+    cin_verso_file = models.FileField(upload_to='agents/cin/', blank=True, null=True, verbose_name="CIN Verso")
     attestation_file = models.FileField(upload_to='agents/attestations/', blank=True, null=True)
     fiche_antropometrique = models.FileField(upload_to='agents/fiches_antropometriques/', blank=True, null=True)
     is_archived = models.BooleanField(default=False, db_index=True)
@@ -111,6 +136,58 @@ class Agent(models.Model):
         ).aggregate(avg_note=Avg('note_intervenant'))['avg_note']
         
         return round(avg, 1) if avg else None
+
+    def save(self, *args, **kwargs):
+        # Sync status and is_blacklisted
+        if self.statut == 'blacklist':
+            self.is_blacklisted = True
+        elif self.is_blacklisted:
+            self.statut = 'blacklist'
+        
+        # If is_blacklisted was True but status was changed to something else, clear is_blacklisted
+        if self.statut != 'blacklist' and self.is_blacklisted:
+            self.is_blacklisted = False
+            
+        # Update disponibilite_intervention automatically on save
+        # Check for stand_by or en_conge expiration first
+        today = timezone.now().date()
+        
+        # Sync standby_until if status is stand_by and standby_days is set
+        if self.statut == 'stand_by':
+            if self.standby_days and not self.standby_until:
+                from datetime import timedelta
+                self.standby_until = today + timedelta(days=self.standby_days)
+            elif self.standby_until and today > self.standby_until:
+                self.statut = 'active'
+                self.standby_days = None
+                self.standby_until = None
+        elif self.statut == 'en_conge':
+            if self.leave_end and today > self.leave_end:
+                self.statut = 'active'
+        else:
+            self.standby_days = None
+            self.standby_until = None
+                
+        # Now set disponibilite_intervention
+        if self.statut in ['blacklist', 'stand_by', 'en_conge', 'malade']:
+            self.disponibilite_intervention = 'non_disponible'
+        else:
+            # Check for active mission: confiremee or en_cours
+            try:
+                from missions.models import Mission
+                active_missions = Mission.objects.filter(
+                    agent=self,
+                    statut__in=[Mission.CONFIRMEE, Mission.EN_COURS]
+                ).exists()
+            except Exception:
+                active_missions = False
+                
+            if active_missions:
+                self.disponibilite_intervention = 'occupee'
+            else:
+                self.disponibilite_intervention = 'disponible'
+
+        super().save(*args, **kwargs)
 
 
 class AgentExperience(models.Model):

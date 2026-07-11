@@ -10,7 +10,21 @@ from rest_framework.response import Response
 
 
 class AgentViewSet(viewsets.ModelViewSet):
-    queryset = Agent.objects.filter(is_archived=False)
+    def get_queryset(self):
+        # Trigger reversion updates dynamically for agents whose standby/conge expired
+        from django.utils import timezone
+        from django.db.models import Q
+        today = timezone.now().date()
+        agents_to_revert = Agent.objects.filter(
+            Q(statut='stand_by', standby_until__lt=today) |
+            Q(statut='en_conge', leave_end__lt=today)
+        )
+        for agent in agents_to_revert:
+            try:
+                agent.save()  # This will auto-trigger reversion and availability update
+            except Exception as e:
+                print(f"Error auto-reverting agent {agent.id}: {e}")
+        return Agent.objects.filter(is_archived=False)
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
     filterset_class = AgentFilter
     search_fields = ['first_name', 'last_name', 'phone', 'neighborhood', 'city', 'cin']
@@ -151,6 +165,7 @@ class AgentViewSet(viewsets.ModelViewSet):
         
         serializer = AgentSerializer(share.agent)
         data = serializer.data
+        data.pop('recruiter_notes', None)
         data['demande_context'] = {
             'service': share.demande.service,
             'client_name': share.demande.client.display_name if share.demande.client else 'Inconnu'

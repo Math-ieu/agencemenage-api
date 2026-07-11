@@ -42,11 +42,18 @@ class AgentSerializer(serializers.ModelSerializer):
         else:
             mutable_data = data.copy() if hasattr(data, 'copy') else data
 
-        # 1. Handle JSON strings from FormData (languages)
+        # 1. Handle JSON strings from FormData (languages, availability_calendar)
         languages_json = mutable_data.get('languages')
         if languages_json and isinstance(languages_json, str):
             try:
                 mutable_data['languages'] = json.loads(languages_json)
+            except json.JSONDecodeError:
+                pass
+
+        availability_calendar_json = mutable_data.get('availability_calendar')
+        if availability_calendar_json and isinstance(availability_calendar_json, str):
+            try:
+                mutable_data['availability_calendar'] = json.loads(availability_calendar_json)
             except json.JSONDecodeError:
                 pass
             
@@ -108,7 +115,7 @@ class AgentListSerializer(serializers.ModelSerializer):
         model = Agent
         fields = [
             'id', 'uuid', 'first_name', 'last_name', 'full_name', 'phone', 'whatsapp',
-            'poste', 'statut', 'city', 'neighborhood', 'experience', 
+            'poste', 'statut', 'disponibilite_intervention', 'city', 'neighborhood', 'experience', 
             'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating', 'is_blacklisted',
             'assigned_to', 'assigned_to_name'
         ]

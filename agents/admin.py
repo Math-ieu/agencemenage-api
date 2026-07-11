@@ -10,8 +10,8 @@ class AgentExperienceInline(admin.TabularInline):
 
 @admin.register(Agent)
 class AgentAdmin(admin.ModelAdmin):
-    list_display = ['full_name', 'poste', 'statut', 'phone', 'city', 'created_at']
-    list_filter = ['statut', 'poste', 'city']
+    list_display = ['full_name', 'poste', 'statut', 'disponibilite_intervention', 'phone', 'city', 'created_at']
+    list_filter = ['statut', 'disponibilite_intervention', 'poste', 'city']
     search_fields = ['first_name', 'last_name', 'phone']
     ordering = ['last_name', 'first_name']
     inlines = [AgentExperienceInline]
