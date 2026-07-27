@@ -204,35 +204,41 @@ def _paste_logo(img: Image.Image, logo_input) -> None:
 
 def _draw_text(img: Image.Image,
                nom: str, prenom: str,
-               age: int, adresse: str) -> None:
+               age: int, adresse: str,
+               nationality: str = "Marocaine") -> None:
     draw = ImageDraw.Draw(img)
 
     font_name_large = _get_font(bold=True, size=68)
     font_sub        = _get_font(bold=True, size=28)
 
-    full_name = f"{prenom.upper()} {nom.upper()}"
-    draw.text((60, 230), full_name, font=font_name_large, fill=TEAL)
+    first_name_clean = (prenom or "").strip()
+    title_text = first_name_clean.upper() if first_name_clean else "CANDIDAT"
+    draw.text((60, 230), title_text, font=font_name_large, fill=TEAL)
 
-    draw.text((60, 325), f"{prenom} {nom.capitalize()}, {age} ans",
-              font=font_sub, fill=TEXT_DARK)
-    draw.text((60, 368), adresse, font=font_sub, fill=TEXT_DARK)
+    age_str = f"{age} ans" if age and age > 0 else ""
+    sub1 = f"{first_name_clean.capitalize()}, {age_str}".strip(", ") if age_str else first_name_clean.capitalize()
+    draw.text((60, 325), sub1, font=font_sub, fill=TEXT_DARK)
+
+    nat_str = (nationality or "Marocaine").strip()
+    if nat_str:
+        draw.text((60, 368), nat_str, font=font_sub, fill=TEXT_DARK)
 
 
 # ── Fonction principale ───────────────────────────────────────────────────────
 
 def generate_profile_card(
-    nom: str,
-    prenom: str,
-    age: int,
-    adresse: str,
-    logo_path,
-    profile_photo_path,
+    nom: str = "",
+    prenom: str = "",
+    age: int = 0,
+    adresse: str = "",
+    logo_path = None,
+    profile_photo_path = None,
     output_path = None,
+    nationality: str = "Marocaine",
 ) -> any:
     """
-    Génère la fiche profil. 
-    Si `output_path` est un chemin, enregistre l'image.
-    Si `output_path` est None, retourne l'objet Image.
+    Génère la fiche profil (image PNG) au format WhatsApp.
+    Affiche le prénom, l'âge, la nationalité et la photo.
     """
     # Canvas de base
     img = Image.new("RGB", (W, H), BG_COLOR)
@@ -247,7 +253,7 @@ def generate_profile_card(
     _paste_logo(img, logo_path)
 
     # 4. Texte
-    _draw_text(img, nom, prenom, age, adresse)
+    _draw_text(img, nom, prenom, age, adresse, nationality)
 
     if output_path:
         img.save(output_path, "PNG", optimize=True)

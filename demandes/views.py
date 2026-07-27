@@ -758,6 +758,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 prenom=agent.first_name,
                 age=age if isinstance(age, int) else 30,
                 adresse=f"{agent.neighborhood} - {agent.city}",
+                nationality=getattr(agent, 'nationality', None) or 'Marocaine',
                 logo_path=logo_path if os.path.exists(logo_path) else None,
                 profile_photo_path=photo_input,
                 output_path=None # Return PIL object
@@ -793,6 +794,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                     prenom=agent.first_name,
                     age=age if isinstance(age, int) else 30,
                     adresse=f"{agent.neighborhood} - {agent.city}",
+                    nationality=getattr(agent, 'nationality', None) or 'Marocaine',
                     logo_path=logo_path if os.path.exists(logo_path) else None,
                     profile_photo_path=None, # On force None pour éviter l'erreur de format
                     output_path=None
