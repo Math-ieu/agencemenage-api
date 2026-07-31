@@ -530,8 +530,10 @@ class DemandeSerializer(serializers.ModelSerializer):
             
             # Step 2: Send WhatsApp (if requested)
             if envoyer_whatsapp:
-                client_phone = instance.client.phone if instance.client else None
-                if client_phone:
+                from .utils.whatsapp import get_commercial_for_demande
+                request_user = self.context.get('request').user if self.context.get('request') else None
+                commercial, commercial_phone = get_commercial_for_demande(instance, user=request_user)
+                if commercial_phone:
                     # Construct absolute media URL
                     media_url = f"{settings.API_BASE_URL}/api/media/{doc.fichier.name}" if doc and doc.fichier and doc.fichier.name else None
                     
@@ -575,7 +577,7 @@ class DemandeSerializer(serializers.ModelSerializer):
                             wa_media_type = 'image'
                         
                         WhatsAppService.send_template_message(
-                            to=client_phone,
+                            to=commercial_phone,
                             template_name=template,
                             media_url=media_url,
                             media_type=wa_media_type,

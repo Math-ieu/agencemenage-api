@@ -71,21 +71,22 @@ class Command(BaseCommand):
                     target_roles=['operations', 'admin'],
                 )
 
-                # 2. WhatsApp client
-                client_phone = (client.phone if client else None) or (demande.formulaire_data or {}).get('whatsapp_phone')
-                if client_phone:
+                # 2. WhatsApp au commercial responsable pour transfert au client
+                from demandes.utils.whatsapp import get_commercial_for_demande
+                commercial, commercial_phone = get_commercial_for_demande(demande)
+                if commercial_phone:
                     variables = [client_name, fete_label, debut, fin, passage]
                     res = WhatsAppService.send_template_message(
-                        to=client_phone,
+                        to=commercial_phone,
                         template_name='notif_suspension_ferie_client',
                         variables=variables,
                     )
                     if res:
-                        self.stdout.write(f"WhatsApp suspension envoyé à {client_phone} (passage {passage})")
+                        self.stdout.write(f"WhatsApp suspension envoyé au commercial ({commercial_phone}) pour {client_name}")
                     else:
-                        self.stderr.write(f"Échec WhatsApp suspension {client_phone} (passage {passage})")
+                        self.stderr.write(f"Échec WhatsApp suspension commercial ({commercial_phone})")
                 else:
-                    self.stderr.write(f"Client sans téléphone — notification interne seule (passage {passage})")
+                    self.stderr.write(f"Demande {demande.id} sans commercial avec téléphone — notification interne seule (passage {passage})")
 
                 sent_dates.append(key)
                 modified = True

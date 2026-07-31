@@ -75,3 +75,36 @@ class WhatsAppService:
         except Exception as e:
             logger.error(f"WhatsApp API Error: {str(e)}")
             return None
+
+
+def get_commercial_for_demande(demande, user=None):
+    """
+    Returns (commercial_user, phone_number) responsible for a demande.
+    Checks:
+    1. demande.assigned_to (if phone exists)
+    2. demande.client.assigned_commercial (if phone exists)
+    3. user (if provided and phone exists)
+    """
+    if demande:
+        if getattr(demande, 'assigned_to', None) and getattr(demande.assigned_to, 'phone', None) and demande.assigned_to.phone.strip():
+            return demande.assigned_to, demande.assigned_to.phone.strip()
+        if getattr(demande, 'client', None) and getattr(demande.client, 'assigned_commercial', None) and getattr(demande.client.assigned_commercial, 'phone', None) and demande.client.assigned_commercial.phone.strip():
+            return demande.client.assigned_commercial, demande.client.assigned_commercial.phone.strip()
+    if user and getattr(user, 'phone', None) and user.phone.strip():
+        return user, user.phone.strip()
+    return None, None
+
+
+def get_commercial_for_client(client, user=None):
+    """
+    Returns (commercial_user, phone_number) responsible for a client.
+    Checks:
+    1. client.assigned_commercial (if phone exists)
+    2. user (if provided and phone exists)
+    """
+    if client and getattr(client, 'assigned_commercial', None) and getattr(client.assigned_commercial, 'phone', None) and client.assigned_commercial.phone.strip():
+        return client.assigned_commercial, client.assigned_commercial.phone.strip()
+    if user and getattr(user, 'phone', None) and user.phone.strip():
+        return user, user.phone.strip()
+    return None, None
+

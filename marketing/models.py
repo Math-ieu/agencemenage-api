@@ -202,9 +202,10 @@ class PromoCode(models.Model):
                     logger.error(f"Error sending BD promo code email to {client.email}: {str(e)}")
 
             # Send WhatsApp if configured
-            if 'whatsapp' in (self.canaux or []) and client.phone:
+            from demandes.utils.whatsapp import WhatsAppService, get_commercial_for_client
+            _, commercial_phone = get_commercial_for_client(client)
+            if 'whatsapp' in (self.canaux or []) and commercial_phone:
                 try:
-                    from demandes.utils.whatsapp import WhatsAppService
                     # Send template message
                     variables = [
                         first_name or "Client",
@@ -214,14 +215,14 @@ class PromoCode(models.Model):
                         lien_str
                     ]
                     res = WhatsAppService.send_template_message(
-                        to=client.phone,
+                        to=commercial_phone,
                         template_name='code_promo_bd',
                         variables=variables
                     )
                     if res:
                         sent_whatsapps += 1
                 except Exception as e:
-                    logger.error(f"Error sending BD promo code WhatsApp to {client.phone}: {str(e)}")
+                    logger.error(f"Error sending BD promo code WhatsApp to commercial {commercial_phone}: {str(e)}")
 
         return sent_emails, sent_whatsapps
 

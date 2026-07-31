@@ -131,11 +131,14 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
             # Send WhatsApp message if configured
             if instance.envoyer_message and 'whatsapp' in (instance.canal_diffusion or []):
                 try:
-                    client_phone = instance.client.phone if instance.client else None
-                    if not client_phone and instance.demande:
-                        client_phone = instance.demande.client_phone or instance.demande.client_whatsapp
+                    from demandes.utils.whatsapp import WhatsAppService, get_commercial_for_demande, get_commercial_for_client
+                    commercial, target_phone = None, None
+                    if instance.demande:
+                        commercial, target_phone = get_commercial_for_demande(instance.demande, user=self.request.user)
+                    if not target_phone and instance.client:
+                        commercial, target_phone = get_commercial_for_client(instance.client, user=self.request.user)
                     
-                    if client_phone:
+                    if target_phone:
                         dem = instance.demande
                         client_name = instance.client.display_name if instance.client else (dem.client_name if dem else "Client")
                         demande_service = dem.service if dem else "prestation"
@@ -176,9 +179,8 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
                             collaborateur_name
                         ]
                         
-                        from demandes.utils.whatsapp import WhatsAppService
                         WhatsAppService.send_template_message(
-                            to=client_phone,
+                            to=target_phone,
                             template_name='geste_commercial_client',
                             variables=vars
                         )

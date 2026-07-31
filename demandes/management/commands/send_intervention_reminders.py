@@ -243,14 +243,12 @@ class Command(BaseCommand):
                         from demandes.utils.document_helpers import generate_demande_document
                         doc = generate_demande_document(demande, 'facture', month_index=next_month_index)
                         
-                        # 3. Send the invoice via WhatsApp automatically
-                        client_phone = demande.client.phone if demande.client else None
-                        if not client_phone and isinstance(demande.formulaire_data, dict):
-                            client_phone = demande.formulaire_data.get('whatsapp_phone') or demande.formulaire_data.get('phone')
+                        # 3. Send the invoice via WhatsApp automatically to commercial
+                        from demandes.utils.whatsapp import WhatsAppService, get_commercial_for_demande
+                        commercial, commercial_phone = get_commercial_for_demande(demande)
                             
-                        if client_phone:
+                        if commercial_phone:
                             client_name = demande.client.display_name if demande.client else demande.client_name or (demande.formulaire_data.get('nom', 'Client') if isinstance(demande.formulaire_data, dict) else 'Client')
-                            from demandes.utils.whatsapp import WhatsAppService
                             
                             formatted_total = f"{original_monthly_price:,.2f}".replace(",", " ")
                             invoice_num = f"AM/F{demande.id:03d}-M{next_month_index}/{datetime.datetime.now().year}"
@@ -267,13 +265,13 @@ class Command(BaseCommand):
                             ]
                             
                             WhatsAppService.send_template_message(
-                                to=client_phone,
+                                to=commercial_phone,
                                 template_name='facture_client',
                                 media_url=media_url,
                                 media_type='document',
                                 variables=vars
                             )
-                            self.stdout.write(f"WhatsApp envoyé pour planning ID {planning.id} (Mois {next_month_index})")
+                            self.stdout.write(f"WhatsApp facture envoyé au commercial ({commercial_phone}) pour planning ID {planning.id} (Mois {next_month_index})")
                     except Exception as ex:
                         self.stderr.write(f"Erreur lors de la génération/envoi auto du document pour planning ID {planning.id}: {ex}")
                     
@@ -456,8 +454,10 @@ class Command(BaseCommand):
                     target_roles=["operations", "admin"]
                 )
                 
-                # 2. Send WhatsApp notification
-                if client_phone:
+                # 2. Send WhatsApp notification to commercial responsible for transfer
+                from demandes.utils.whatsapp import get_commercial_for_demande
+                commercial, commercial_phone = get_commercial_for_demande(new_demande)
+                if commercial_phone:
                     # Var 1: client name, Var 2: service, Var 3: date, Var 4: heure
                     variables = [
                         client_name,
@@ -468,16 +468,16 @@ class Command(BaseCommand):
                     
                     # Call WhatsApp API
                     res = WhatsAppService.send_template_message(
-                        to=client_phone,
+                        to=commercial_phone,
                         template_name='rappel_intervention_24h',
                         variables=variables
                     )
                     if res:
-                        self.stdout.write(f"WhatsApp envoyé avec succès au {client_phone}")
+                        self.stdout.write(f"WhatsApp 24h envoyé avec succès au commercial ({commercial_phone}) pour {client_name}")
                     else:
-                        self.stderr.write(f"Échec de l'envoi WhatsApp au {client_phone}")
+                        self.stderr.write(f"Échec de l'envoi WhatsApp au commercial ({commercial_phone})")
                 else:
-                    self.stderr.write(f"Le client {client_name} n'a pas de numéro de téléphone.")
+                    self.stderr.write(f"La demande {new_demande.id} n'a pas de commercial avec numéro de téléphone.")
                 
                 # 3. Update planning sent dates
                 sent_dates.append(tomorrow_str)

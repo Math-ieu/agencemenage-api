@@ -123,10 +123,14 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return
 
         # Prepare variables for template 'demande_feedback_client_v1'
-        client_phone = client.phone if client else demande.formulaire_data.get('whatsapp_phone')
         client_name = client.display_name if client else demande.formulaire_data.get('nom', 'Client')
-        
-        if not client_phone:
+
+        from .utils.whatsapp import WhatsAppService, get_commercial_for_demande
+        commercial, commercial_phone = get_commercial_for_demande(demande)
+        if not commercial_phone:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Auto feedback WA skipped: No commercial phone found for demande {demande.id}")
             return
 
         from agencemenage.utils import encode_id
@@ -135,13 +139,12 @@ class DemandeViewSet(viewsets.ModelViewSet):
         vars = [client_name, feedback_link]
 
         try:
-            from .utils.whatsapp import WhatsAppService
             WhatsAppService.send_template_message(
-                to=client_phone,
+                to=commercial_phone,
                 template_name='demande_feedback_client_v1',
                 variables=vars
             )
-            self._log_action(None, 'auto_send_wa_feedback', demande)
+            self._log_action(None, 'auto_send_wa_feedback', demande, extra_data={'sent_to_commercial_phone': commercial_phone})
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
@@ -449,14 +452,19 @@ class DemandeViewSet(viewsets.ModelViewSet):
         if not doc_type:
             return Response({'error': 'Le type de document est requis.'}, status=400)
             
-        client_phone = demande.client.phone if demande.client else None
-        if not client_phone:
-            # Essayer de récupérer le numéro depuis les données de formulaire
-            client_phone = demande.formulaire_data.get('whatsapp_phone') or demande.formulaire_data.get('phone')
-            if not client_phone:
-                return Response({'error': 'Numéro de téléphone du client manquant.'}, status=400)
+        if not doc_type:
+            return Response({'error': 'Le type de document est requis.'}, status=400)
+            
+        from .utils.whatsapp import WhatsAppService, get_commercial_for_demande
+        
+        commercial, commercial_phone = get_commercial_for_demande(demande, user=request.user)
+        if not commercial_phone:
+            return Response({
+                'error': "Aucun commercial avec un numéro WhatsApp valide n'est assigné à cette demande. Veuillez attribuer un commercial ayant un numéro de téléphone."
+            }, status=400)
                 
         client_name = demande.client.display_name if demande.client else demande.client_name or demande.formulaire_data.get('nom', 'Client')
+        commercial_name = getattr(commercial, 'full_name', '') or getattr(commercial, 'first_name', '') or "Commercial"
         
         import logging
         logger = logging.getLogger(__name__)
@@ -492,7 +500,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 logger.info(f"WhatsApp: Constructed media_url from DB: {media_url}")
             
             wa_media_type = 'document' if doc_type in ['devis', 'facture'] else 'image'
-            logger.info(f"WhatsApp: Final media_url={media_url}, type={wa_media_type}, phone={client_phone}")
+            logger.info(f"WhatsApp: Final media_url={media_url}, type={wa_media_type}, phone={commercial_phone}")
 
         # Définition des templates et variables
         template = None
@@ -609,7 +617,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
 
                 res = WhatsAppService.send_template_message(
-                    to=client_phone,
+                    to=commercial_phone,
                     template_name=template,
                     media_url=media_url,
                     media_type=wa_media_type,
@@ -626,6 +634,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                         extra_data={
                             'agent_id': agent.id,
                             'agent_name': getattr(agent, 'full_name', '') or f"{agent.first_name} {agent.last_name}".strip(),
+                            'sent_to_commercial_phone': commercial_phone,
                         }
                     )
 
@@ -638,6 +647,10 @@ class DemandeViewSet(viewsets.ModelViewSet):
             if success_count > 0:
                 return Response({
                     'success': True,
+                    'sent_to_commercial': True,
+                    'commercial_name': commercial_name,
+                    'commercial_phone': commercial_phone,
+                    'message': f"Les fiches profil ont été envoyées sur le WhatsApp du commercial {commercial_name} ({commercial_phone}) pour transfert au client.",
                     'sent_count': success_count,
                     'total': profiles.count(),
                     'results': results,
@@ -659,7 +672,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
             
         # Appel API réel
         res = WhatsAppService.send_template_message(
-            to=client_phone,
+            to=commercial_phone,
             template_name=template,
             media_url=media_url,
             media_type=wa_media_type,
@@ -667,8 +680,15 @@ class DemandeViewSet(viewsets.ModelViewSet):
         )
         
         if res:
-            self._log_action(request.user, f'send_wa_{doc_type}', demande)
-            return Response({'success': True, 'wa_response': res})
+            self._log_action(request.user, f'send_wa_{doc_type}', demande, extra_data={'sent_to_commercial_phone': commercial_phone})
+            return Response({
+                'success': True,
+                'sent_to_commercial': True,
+                'commercial_name': commercial_name,
+                'commercial_phone': commercial_phone,
+                'message': f"Le message WhatsApp a été envoyé sur le WhatsApp du commercial {commercial_name} ({commercial_phone}) pour transfert au client.",
+                'wa_response': res
+            })
         else:
             return Response({'error': "Échec de l'envoi WhatsApp via l'API (Service tiers indisponible ou bloqué)."}, status=502)
 
