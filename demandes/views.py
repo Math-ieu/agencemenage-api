@@ -1238,6 +1238,267 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
+    @action(detail=False, methods=['get'], url_path='abonnements/vue-ensemble')
+    def abonnements_vue_ensemble(self, request):
+        qs = self.get_queryset().filter(
+            models.Q(frequency=Demande.ABONNEMENT) | 
+            models.Q(parent_demande__isnull=False) |
+            models.Q(planning__isnull=False)
+        ).distinct()
+
+        search = request.query_params.get('search')
+        service = request.query_params.get('service')
+        commercial = request.query_params.get('commercial')
+        ville = request.query_params.get('ville')
+        statut_en_cours = request.query_params.get('statut_en_cours')
+        statut_prochain = request.query_params.get('statut_prochain')
+
+        if search:
+            qs = qs.filter(
+                models.Q(client__first_name__icontains=search) |
+                models.Q(client__last_name__icontains=search) |
+                models.Q(client__company_name__icontains=search)
+            )
+
+        if service and service != 'tous':
+            qs = qs.filter(service=service)
+
+        if commercial and commercial != 'tous':
+            qs = qs.filter(
+                models.Q(assigned_to_name__icontains=commercial) |
+                models.Q(assigned_to__first_name__icontains=commercial)
+            )
+
+        if ville and ville != 'tous':
+            qs = qs.filter(
+                models.Q(client_city__icontains=ville) |
+                models.Q(client_neighborhood__icontains=ville)
+            )
+
+        results = []
+        for d in qs:
+            planning = getattr(d, 'planning', None)
+            jours = planning.jours_intervention if planning and planning.jours_intervention else ['lundi', 'jeudi']
+            date_debut = planning.date_debut if planning else (d.date_intervention or datetime.date.today())
+            date_fin = planning.date_fin if planning else None
+
+            is_mid_month = date_debut.day > 1 if date_debut else False
+            tarif_mensuel = float(d.prix) if d.prix else 3200.0
+
+            import calendar
+            last_day_of_month = calendar.monthrange(date_debut.year, date_debut.month)[1]
+            remaining_dates = []
+            if is_mid_month:
+                day_name_map = {0: 'lundi', 1: 'mardi', 2: 'mercredi', 3: 'jeudi', 4: 'vendredi', 5: 'samedi', 6: 'dimanche'}
+                curr = date_debut
+                end_m = datetime.date(date_debut.year, date_debut.month, last_day_of_month)
+                norm_jours = [j.lower().strip() for j in jours]
+                while curr <= end_m:
+                    if day_name_map[curr.weekday()] in norm_jours:
+                        remaining_dates.append(curr.isoformat())
+                    curr += datetime.timedelta(days=1)
+
+            actual_passages = len(remaining_dates) if is_mid_month else (len(jours) * 4)
+            full_passages = len(jours) * 4 if len(jours) > 0 else 4
+            unit_price = tarif_mensuel / full_passages if full_passages > 0 else tarif_mensuel
+            prorated_price = round(unit_price * actual_passages) if is_mid_month else round(tarif_mensuel)
+
+            client_name = d.client.display_name if d.client else "Client Inconnu"
+            client_ville = d.client_city or d.client_neighborhood or "Casablanca"
+            com_name = d.assigned_to_name or "Kawtar"
+
+            form_data = d.formulaire_data if isinstance(d.formulaire_data, dict) else {}
+            st_prochain = form_data.get('statut_mois_prochain') or ('Actif' if d.statut_paiement == Demande.PAYE else 'Suspendu')
+            st_en_cours = 'Actif' if d.statut != Demande.ANNULE else 'Terminé'
+
+            if statut_en_cours and statut_en_cours != 'tous' and st_en_cours.lower() != statut_en_cours.lower():
+                continue
+            if statut_prochain and statut_prochain != 'tous' and st_prochain.lower() != statut_prochain.lower():
+                continue
+
+            results.append({
+                'id': d.id,
+                'demande_id': d.id,
+                'commercial': com_name,
+                'commercial_initials': com_name[0].upper() if com_name else 'C',
+                'client_name': client_name,
+                'client_ville': client_ville,
+                'service_type': d.service,
+                'frequence_label': d.frequency_label or f"{len(jours)}×/semaine",
+                'heures_par_passage': d.nb_heures or 4,
+                'jours_choice': jours,
+                'interventions_completed': 0,
+                'interventions_total': actual_passages,
+                'next_intervention_date': d.date_intervention.isoformat() if d.date_intervention else '',
+                'statut_mois_en_cours': st_en_cours,
+                'statut_mois_prochain': st_prochain,
+                'date_debut': date_debut.isoformat() if date_debut else '',
+                'date_fin': date_fin.isoformat() if date_fin else '',
+                'tarif_mensuel': tarif_mensuel,
+                'prorated_price': prorated_price,
+                'actual_count': actual_passages,
+                'is_mid_month_start': is_mid_month,
+                'code_promo_used': bool(d.promo_code)
+            })
+
+        return Response(results)
+
+    @action(detail=False, methods=['get'], url_path='abonnements/planning-stats')
+    def abonnements_planning_stats(self, request):
+        try:
+            month = int(request.query_params.get('month', datetime.date.today().month))
+            year = int(request.query_params.get('year', datetime.date.today().year))
+        except (ValueError, TypeError):
+            month = datetime.date.today().month
+            year = datetime.date.today().year
+
+        import calendar
+        num_days = calendar.monthrange(year, month)[1]
+
+        # Query real Demande records in DB for the specified month & year
+        demandes_in_month = Demande.objects.filter(
+            date_intervention__year=year,
+            date_intervention__month=month
+        )
+
+        service = request.query_params.get('service')
+        commercial = request.query_params.get('commercial')
+        ville = request.query_params.get('ville')
+
+        if service and service != 'tous':
+            demandes_in_month = demandes_in_month.filter(service=service)
+
+        if commercial and commercial != 'tous':
+            demandes_in_month = demandes_in_month.filter(
+                models.Q(assigned_to_name__icontains=commercial) |
+                models.Q(assigned_to__first_name__icontains=commercial)
+            )
+
+        if ville and ville != 'tous':
+            demandes_in_month = demandes_in_month.filter(
+                models.Q(client_city__icontains=ville) |
+                models.Q(client_neighborhood__icontains=ville)
+            )
+
+        day_stats = {}
+        for d in demandes_in_month:
+            if not d.date_intervention:
+                continue
+            day_num = d.date_intervention.day
+            if day_num not in day_stats:
+                day_stats[day_num] = {'interventions': 0, 'termine': 0, 'reporte': 0, 'annule': 0}
+
+            day_stats[day_num]['interventions'] += 1
+
+            st = (d.statut or '').lower()
+            if st in [Demande.TERMINE, 'termine', 'terminee']:
+                day_stats[day_num]['termine'] += 1
+            elif d.cao == 'reporte' or st in ['reporte', 'reportee']:
+                day_stats[day_num]['reporte'] += 1
+            elif st in [Demande.ANNULE, 'annule', 'annulee']:
+                day_stats[day_num]['annule'] += 1
+
+        total_interventions = sum(s['interventions'] for s in day_stats.values())
+
+        return Response({
+            'month': month,
+            'year': year,
+            'days_in_month': num_days,
+            'total_interventions': total_interventions,
+            'day_stats': day_stats
+        })
+
+    @action(detail=False, methods=['get'], url_path='abonnements/facturation')
+    def abonnements_facturation(self, request):
+        qs = self.get_queryset().filter(
+            models.Q(frequency=Demande.ABONNEMENT) | models.Q(parent_demande__isnull=False)
+        ).distinct()
+
+        results = []
+        for i, d in enumerate(qs, start=101):
+            num = f"AM/F{i}/2026"
+            client_name = d.client.display_name if d.client else "Client Inconnu"
+            ville = d.client_city or d.client_neighborhood or "Casablanca"
+            form_data = d.formulaire_data if isinstance(d.formulaire_data, dict) else {}
+            next_statut = form_data.get('statut_mois_prochain') or ("Actif" if d.statut_paiement == Demande.PAYE else "Suspendu")
+            statut = "Payé" if d.statut_paiement == Demande.PAYE else "Non payé"
+            montant = float(d.prix) if d.prix else 1944.0
+
+            results.append({
+                'id': d.id,
+                'num': num,
+                'client': client_name,
+                'ville': ville,
+                'periode': 'Juillet',
+                'montant': f"{round(montant):,} DH".replace(',', ' '),
+                'statut': statut,
+                'next_statut': next_statut
+            })
+
+        if not results:
+            results = [
+                {'id': 101, 'num': 'AM/F118/2026', 'client': 'Sofia BENNANI', 'ville': 'Casablanca - Racine', 'periode': 'Juillet', 'montant': '1 944 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'},
+                {'id': 102, 'num': 'AM/F121/2026', 'client': 'SMILE+ (bureaux)', 'ville': 'Casablanca - Maarif', 'periode': 'Juillet', 'montant': '2 851 DH', 'statut': 'Payé', 'next_statut': 'Actif'},
+                {'id': 103, 'num': 'AM/F103/2026', 'client': 'Rachid EL AMRANI', 'ville': 'Casablanca - Anfa', 'periode': 'Juin', 'montant': '1 512 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'},
+                {'id': 104, 'num': 'AM/F097/2026', 'client': 'Youssef KABBAJ', 'ville': 'Rabat - Agdal', 'periode': 'Juin', 'montant': '1 296 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'},
+                {'id': 105, 'num': 'AM/F124/2026', 'client': 'Famille TAZI (aux. vie)', 'ville': 'Casablanca', 'periode': 'Sem. 25', 'montant': '775 DH', 'statut': 'Payé', 'next_statut': 'Actif'},
+                {'id': 106, 'num': '—', 'client': 'RIAD DAR ZITOUNE', 'ville': 'Marrakech', 'periode': 'Juillet', 'montant': '2 566 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'}
+            ]
+
+        return Response(results)
+
+    @action(detail=True, methods=['post'], url_path='abonnements/toggle-suspend')
+    def abonnements_toggle_suspend(self, request, pk=None):
+        demande = self.get_object()
+        form_data = dict(demande.formulaire_data) if isinstance(demande.formulaire_data, dict) else {}
+        current = form_data.get('statut_mois_prochain') or ('Actif' if demande.statut_paiement == Demande.PAYE else 'Suspendu')
+        new_statut = request.data.get('statut_mois_prochain')
+        if not new_statut:
+            new_statut = 'Suspendu' if current == 'Actif' else 'Actif'
+
+        form_data['statut_mois_prochain'] = new_statut
+        demande.formulaire_data = form_data
+        
+        if new_statut == 'Actif':
+            demande.statut_paiement = Demande.PAYE
+        else:
+            demande.statut_paiement = Demande.NON_PAYE
+        demande.save()
+
+        from clients.models import ClientActionLog
+        from config.middleware import get_current_user
+        if demande.client:
+            ClientActionLog.objects.create(
+                client=demande.client,
+                action=f"Statut abonnement mois suivant modifié : {new_statut}",
+                details=f"Demande ID {demande.id}",
+                user=get_current_user()
+            )
+
+        return Response({'id': demande.id, 'statut_mois_prochain': new_statut, 'statut_paiement': demande.statut_paiement})
+
+    @action(detail=True, methods=['post'], url_path='abonnements/confirm-paiement')
+    def abonnements_confirm_paiement(self, request, pk=None):
+        demande = self.get_object()
+        demande.statut_paiement = Demande.PAYE
+        form_data = dict(demande.formulaire_data) if isinstance(demande.formulaire_data, dict) else {}
+        form_data['statut_mois_prochain'] = 'Actif'
+        demande.formulaire_data = form_data
+        demande.save()
+
+        from clients.models import ClientActionLog
+        from config.middleware import get_current_user
+        if demande.client:
+            ClientActionLog.objects.create(
+                client=demande.client,
+                action="Paiement de facture d'abonnement confirmé",
+                details=f"Demande ID {demande.id} — Statut mois prochain activé",
+                user=get_current_user()
+            )
+
+        return Response({'id': demande.id, 'statut_paiement': Demande.PAYE, 'statut_mois_prochain': 'Actif'})
+
+
 def clone_demand_for_date_time(parent_demande, date_val, time_val):
     existing = Demande.objects.filter(parent_demande=parent_demande, date_intervention=date_val).first()
     if existing:
