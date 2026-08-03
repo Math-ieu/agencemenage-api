@@ -262,3 +262,61 @@ def send_password_reset_email(user, reset_code):
     
     html_content = get_base_html_template(subject, content)
     return send_resend_email(user.email, subject, html_content)
+
+
+def send_holiday_suspension_email(commercial, client_name, fete_label, debut, fin, passage):
+    """
+    Sends an email to a commercial agent notifying them of a holiday suspension for a client in their portfolio.
+    Also falls back to Django standard send_mail if Resend is not configured.
+    """
+    email = getattr(commercial, 'email', None)
+    if not email:
+        return False
+
+    name = f"{getattr(commercial, 'first_name', '')} {getattr(commercial, 'last_name', '')}".strip() or getattr(commercial, 'username', 'Commercial')
+    subject = f"🔔 Alerte Jour Férié ({fete_label}) — Client : {client_name}"
+
+    content = f"""
+      <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">Alerte Suspension Jour Férié</h2>
+      <p>Bonjour <strong>{name}</strong>,</p>
+      <p>Une période de suspension liée à <strong>{fete_label}</strong> est planifiée du <strong>{debut}</strong> au <strong>{fin}</strong>.</p>
+      
+      <div class="card">
+        <h3 class="card-title">Intervention concernée dans votre portefeuille</h3>
+        <div class="info-row">
+          <span class="info-label">Client :</span>
+          <span class="info-value">{client_name}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Date du passage :</span>
+          <span class="info-value">{passage}</span>
+        </div>
+        <div class="info-row">
+          <span class="info-label">Période fériée :</span>
+          <span class="info-value">{debut} au {fin}</span>
+        </div>
+      </div>
+      
+      <p><strong>Action requise :</strong> Merci de contacter votre client pour lui proposer une date de report ou valider l'annulation du passage, puis de mettre à jour le statut dans le backoffice.</p>
+    """
+
+    html_content = get_base_html_template(subject, content)
+
+    resend_success = send_resend_email(email, subject, html_content)
+    if resend_success:
+        return True
+
+    try:
+        from django.core.mail import send_mail
+        send_mail(
+            subject=subject,
+            message=f"Alerte Jour Férié ({fete_label})\nClient: {client_name}\nPassage: {passage}\nPériode: {debut} au {fin}",
+            from_email=getattr(settings, 'DEFAULT_FROM_EMAIL', 'notification@agencemenage.ma'),
+            recipient_list=[email],
+            html_message=html_content,
+            fail_silently=True
+        )
+        return True
+    except Exception as e:
+        logger.error(f"Fallback send_mail failed: {e}")
+        return False

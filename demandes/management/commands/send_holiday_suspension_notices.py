@@ -88,6 +88,23 @@ class Command(BaseCommand):
                 else:
                     self.stderr.write(f"Demande {demande.id} sans commercial avec téléphone — notification interne seule (passage {passage})")
 
+                # 3. E-mail au commercial responsable
+                if commercial and getattr(commercial, 'email', None):
+                    try:
+                        from accounts.emails import send_holiday_suspension_email
+                        email_sent = send_holiday_suspension_email(
+                            commercial=commercial,
+                            client_name=client_name,
+                            fete_label=fete_label,
+                            debut=debut,
+                            fin=fin,
+                            passage=passage
+                        )
+                        if email_sent:
+                            self.stdout.write(f"E-mail suspension envoyé au commercial ({commercial.email}) pour {client_name}")
+                    except Exception as e:
+                        self.stderr.write(f"Erreur envoi e-mail commercial ({commercial.email}): {e}")
+
                 sent_dates.append(key)
                 modified = True
                 sent += 1

@@ -1648,3 +1648,20 @@ class FeteReligieuseViewSet(viewsets.ModelViewSet):
         if annee:
             qs = qs.filter(annee=annee)
         return qs
+
+    def perform_create(self, serializer):
+        instance = serializer.save()
+        self._trigger_notifications(instance)
+
+    def perform_update(self, serializer):
+        instance = serializer.save()
+        self._trigger_notifications(instance)
+
+    def _trigger_notifications(self, instance):
+        if instance.actif and instance.date:
+            try:
+                from django.core.management import call_command
+                call_command('send_holiday_suspension_notices')
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error triggering holiday suspension notices: {e}")
