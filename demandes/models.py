@@ -298,6 +298,7 @@ class SubscriptionPlanning(models.Model):
     statut = models.CharField(max_length=20, choices=STATUS_CHOICES, default='en_cours')
     notes = models.TextField(blank=True)
     notification_sent_dates = models.JSONField(default=list)  # Track sent notifications (dates as YYYY-MM-DD)
+    nombre_passages_mois = models.IntegerField(default=0, help_text="Nombre de passages planifiés pour le mois en cours (calculé côté frontend)")
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 
