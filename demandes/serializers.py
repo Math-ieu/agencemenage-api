@@ -102,7 +102,8 @@ class DemandeSerializer(serializers.ModelSerializer):
         extra_fields = ['reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants', 'promo_code_name', 'promo_code_code']
 
     def get_nb_heures(self, obj):
-        return (obj.formulaire_data or {}).get('duree') or (obj.formulaire_data or {}).get('nb_heures') or (obj.formulaire_data or {}).get('duration') or 0
+        fd = obj.formulaire_data or {}
+        return fd.get('duree_heures') or fd.get('nb_heures') or fd.get('heures') or fd.get('duration') or fd.get('duree') or 0
 
     def get_nb_intervenants(self, obj):
         return (obj.formulaire_data or {}).get('nb_intervenants') or (obj.formulaire_data or {}).get('nb_personnel') or (obj.formulaire_data or {}).get('numberOfPeople') or 1
@@ -643,7 +644,8 @@ class DemandeListSerializer(serializers.ModelSerializer):
         ]
 
     def get_nb_heures(self, obj):
-        return (obj.formulaire_data or {}).get('duree') or (obj.formulaire_data or {}).get('nb_heures') or (obj.formulaire_data or {}).get('duration') or 0
+        fd = obj.formulaire_data or {}
+        return fd.get('duree_heures') or fd.get('nb_heures') or fd.get('heures') or fd.get('duration') or fd.get('duree') or 0
 
     def get_nb_intervenants(self, obj):
         return (obj.formulaire_data or {}).get('nb_intervenants') or (obj.formulaire_data or {}).get('nb_personnel') or (obj.formulaire_data or {}).get('numberOfPeople') or 1
