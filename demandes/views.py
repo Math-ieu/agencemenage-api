@@ -97,6 +97,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         demande = serializer.save()
 
+        # AUTOMATION: Sync child demands (delete annulée/reportée on date D1, instantiate only if <= J-1)
+        try:
+            if hasattr(demande, 'planning') and demande.planning:
+                sync_subscription_child_demands(demande, demande.planning)
+        except Exception:
+            pass
+
         # AUTOMATION: Trigger feedback and update payment status if status changed to PRES_TERMINEE
         is_finished = changes.get('statut', {}).get('new') == Demande.PRES_TERMINEE
         if is_finished:
@@ -1136,7 +1143,12 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 semaines=default_weeks
             )
             
-        new_demande = clone_demand_for_date_time(demande, date_val, time_str)
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+
+        new_demande = None
+        if date_val <= tomorrow:
+            new_demande = clone_demand_for_date_time(demande, date_val, time_str)
         
         # Update the semaines JSON to set the demande_id
         semaines = planning.semaines or []
@@ -1166,7 +1178,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                         jours[day_key]['selected'] = True
                         if not jours[day_key].get('heure_debut'):
                             jours[day_key]['heure_debut'] = time_str
-                    jours[day_key]['demande_id'] = new_demande.id
+                    jours[day_key]['demande_id'] = new_demande.id if new_demande else None
                     updated = True
                     break
         
@@ -1176,7 +1188,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
             
         return Response({
             'success': True,
-            'demande_id': new_demande.id,
+            'demande_id': new_demande.id if new_demande else None,
             'planning': SubscriptionPlanningSerializer(planning).data
         })
 
@@ -1678,6 +1690,9 @@ def handle_auto_cloning_of_planning_interventions(demande, planning_obj):
             5: 'samedi',
             6: 'dimanche'
         }
+        today = datetime.date.today()
+        tomorrow = today + datetime.timedelta(days=1)
+
         for week in planning_obj.semaines:
             if not isinstance(week, dict):
                 continue
@@ -1699,10 +1714,12 @@ def handle_auto_cloning_of_planning_interventions(demande, planning_obj):
                 jours_dict = week.get('jours', {})
                 day_info = jours_dict.get(day_name, {})
                 if day_info and day_info.get('selected'):
-                    time_val = day_info.get('heure_debut', '')
-                    if time_val and len(time_val) > 5:
-                        time_val = time_val[:5]
-                    clone_demand_for_date_time(demande, current_date, time_val)
+                    # Rule 2.1: Only instantiate child intervention if Date <= Tomorrow (J-1 or today/past)
+                    if current_date <= tomorrow:
+                        time_val = day_info.get('heure_debut', '')
+                        if time_val and len(time_val) > 5:
+                            time_val = time_val[:5]
+                        clone_demand_for_date_time(demande, current_date, time_val)
                 current_date += datetime.timedelta(days=1)
 
 
