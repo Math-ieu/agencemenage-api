@@ -917,6 +917,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 
             if serializer.is_valid():
                 planning_obj = serializer.save()
+                sync_subscription_child_demands(demande, planning_obj)
                 
                 self._log_action(
                     request.user,
@@ -937,6 +938,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
             serializer = SubscriptionPlanningSerializer(planning, data=request.data, partial=True)
             if serializer.is_valid():
                 planning_obj = serializer.save()
+                sync_subscription_child_demands(demande, planning_obj)
                 
                 if 'statut' in request.data:
                     from clients.models import ClientActionLog
@@ -1497,6 +1499,92 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
             )
 
         return Response({'id': demande.id, 'statut_paiement': Demande.PAYE, 'statut_mois_prochain': 'Actif'})
+
+
+def sync_subscription_child_demands(demande, planning):
+    """
+    Implements Section 2.1 & Section 2.2 of subscription_memory.md:
+    1. Instantiates child demands for planned dates <= J-1 (Tomorrow or Today or Past) if not created yet.
+    2. Deletes child demands for dates marked as annulée, retirée/excluded, or reportée (on date D1).
+    """
+    if not demande or not planning:
+        return
+        
+    today = datetime.date.today()
+    tomorrow = today + datetime.timedelta(days=1)
+    
+    date_overrides = demande.formulaire_data.get('date_overrides', {}) if isinstance(demande.formulaire_data, dict) else {}
+    semaines = planning.semaines or []
+    
+    # 1. Collect all active dates from semaines & date_overrides
+    active_dates = {}  # iso_date -> { 'time': '09:00', 'date_val': datetime.date }
+    
+    for week in semaines:
+        if not isinstance(week, dict):
+            continue
+        jours = week.get('jours', {})
+        w_start = week.get('date_debut')
+        if not w_start or not isinstance(jours, dict):
+            continue
+            
+        try:
+            d_start = datetime.date.fromisoformat(w_start)
+        except (ValueError, TypeError):
+            continue
+            
+        days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+        for offset, day_key in enumerate(days_order):
+            day_info = jours.get(day_key)
+            if not day_info or not isinstance(day_info, dict):
+                continue
+            if day_info.get('selected'):
+                date_val = d_start + datetime.timedelta(days=offset)
+                date_iso = date_val.isoformat()
+                time_val = day_info.get('heure_debut', '09:00')
+                active_dates[date_iso] = {'time': time_val, 'date_val': date_val}
+
+    # Include reprogrammed dates from overrides
+    for k, ov in date_overrides.items():
+        if isinstance(ov, dict):
+            reprog_to = ov.get('reprogrammed_to')
+            if reprog_to:
+                try:
+                    d_val = datetime.date.fromisoformat(reprog_to)
+                    active_dates[reprog_to] = {'time': ov.get('heure', '09:00'), 'date_val': d_val}
+                except (ValueError, TypeError):
+                    pass
+
+    # 2. Check existing child demands for this subscription
+    existing_children = Demande.objects.filter(parent_demande=demande)
+    children_by_date = {c.date_intervention.isoformat(): c for c in existing_children if c.date_intervention}
+
+    # 3. Synchronize Deletions (Section 2.2):
+    # Delete child demand for date D1 if marked as annulée, excluded/retirée, or reportée
+    for date_iso, child in list(children_by_date.items()):
+        ov = date_overrides.get(date_iso, {})
+        statut = (ov.get('statut') or '').lower()
+        is_excluded = ov.get('excluded', False)
+        
+        if is_excluded or statut in ['annule', 'annulee', 'retirer', 'reporte', 'reportee'] or (date_iso not in active_dates and statut != 'termine'):
+            child.delete()
+            children_by_date.pop(date_iso, None)
+
+    # 4. Synchronize Auto-Creation for Dates <= J-1 (Section 2.1):
+    # If planned date <= Tomorrow (J-1 or Today or Past) and not created yet -> instantiate automatically!
+    for date_iso, info in active_dates.items():
+        ov = date_overrides.get(date_iso, {})
+        statut = (ov.get('statut') or '').lower()
+        is_excluded = ov.get('excluded', False)
+        
+        if is_excluded or statut in ['annule', 'annulee', 'retirer', 'reporte', 'reportee']:
+            continue
+            
+        date_val = info['date_val']
+        # Rule 2.1: Instantiated if Date <= Tomorrow (J-1)
+        if date_val <= tomorrow:
+            if date_iso not in children_by_date:
+                new_child = clone_demand_for_date_time(demande, date_val, info['time'])
+                children_by_date[date_iso] = new_child
 
 
 def clone_demand_for_date_time(parent_demande, date_val, time_val):
