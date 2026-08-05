@@ -70,30 +70,49 @@ def generate_demande_document(demande, doc_type, user=None, month_index=None):
         filename = f"DEVIS_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
         db_content_type = Document.DEVIS
     elif doc_type == 'facture':
+        total_ht = float(form_data.get('total_ht', form_data.get('montant_ht', 0)) or 0.0)
+        total_ttc = float(form_data.get('total_ttc', form_data.get('montant_ttc', form_data.get('montant_final', demande.prix or 0))) or 0.0)
+        
+        raw_tva = form_data.get('tva', form_data.get('tva_pct', form_data.get('tva_pourcentage')))
+        if raw_tva is not None and raw_tva != '':
+            try:
+                tva_rate = float(raw_tva) / 100.0
+            except (ValueError, TypeError):
+                tva_rate = 0.20
+        elif form_data.get('tva_active') is False:
+            tva_rate = 0.00
+        else:
+            tva_rate = 0.20
+
+        # If total_ht is equal to total_ttc or invalid, recalculate HT from TTC and TVA rate
+        if total_ht <= 0 or (abs(total_ht - total_ttc) < 0.01 and tva_rate > 0):
+            if total_ttc > 0:
+                total_ht = round(total_ttc / (1.0 + tva_rate), 2) if tva_rate > 0 else total_ttc
+            elif demande.prix:
+                total_ht = round(float(demande.prix) / (1.0 + tva_rate), 2) if tva_rate > 0 else float(demande.prix)
+
+        nb_passages = form_data.get('nombre_passages', 6)
+        prix_unitaire = form_data.get('prix_unitaire')
+        
+        designation = f"{demande.service}"
+        if nb_passages and prix_unitaire:
+            designation = f"{demande.service} ({nb_passages} passages × {prix_unitaire} DH)"
+
         if month_index:
             try:
                 month_idx_int = int(month_index)
             except (ValueError, TypeError):
                 month_idx_int = 1
-                
-            weeks = demande.planning.semaines if (demande.planning and demande.planning.semaines) else []
-            max_month = 1
-            for w in weeks:
-                if isinstance(w, dict) and w.get('mois', 1) > max_month:
-                    max_month = w.get('mois', 1)
-            
-            monthly_price = float(demande.prix) / max_month if (demande.prix and max_month > 0) else 0.0
-            items = [
-                InvoiceItem(f"{demande.service} - Mois {month_idx_int}", monthly_price)
-            ]
+            designation += f" - Mois {month_idx_int}"
             invoice_number = f"AM/F{demande.pk:03d}-M{month_idx_int}/{datetime.datetime.now().year}"
             filename = f"FACTURE_{client_nom.replace(' ', '_')}_{demande.pk}_M{month_idx_int}.pdf"
         else:
-            items = [
-                InvoiceItem(demande.service, float(demande.prix or 0))
-            ]
             invoice_number = f"AM/F{demande.pk:03d}/{datetime.datetime.now().year}"
             filename = f"FACTURE_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
+
+        items = [
+            InvoiceItem(designation, total_ht)
+        ]
             
         invoice_data = InvoiceData(
             invoice_number=invoice_number,
@@ -104,7 +123,7 @@ def generate_demande_document(demande, doc_type, user=None, month_index=None):
             service_type=demande.service if not month_index else f"{demande.service} - Mois {month_index}",
             frequency=resolve_frequency_label(demande),
             items=items,
-            tva_rate=0.20 if form_data.get('tva_active') else 0.00
+            tva_rate=tva_rate
         )
         
         content_bytes = generate_invoice(invoice_data).read()
