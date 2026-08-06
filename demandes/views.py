@@ -908,8 +908,21 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         try:
             file_handle = doc.fichier.open('rb')
-        except FileNotFoundError:
-            raise Http404('Fichier introuvable sur le serveur.')
+        except (FileNotFoundError, IOError, ValueError):
+            if doc.type_document in ['devis', 'facture', 'png']:
+                from .utils.document_helpers import generate_demande_document
+                month_idx = None
+                if doc.nom and '_M' in doc.nom:
+                    import re
+                    m = re.search(r'_M(\d+)', doc.nom)
+                    if m:
+                        month_idx = int(m.group(1))
+                new_doc = generate_demande_document(demande, doc.type_document, user=request.user, month_index=month_idx)
+                doc.fichier = new_doc.fichier
+                doc.save(update_fields=['fichier'])
+                file_handle = doc.fichier.open('rb')
+            else:
+                raise Http404('Fichier introuvable sur le serveur.')
 
         mime_type, _ = mimetypes.guess_type(doc.fichier.name)
         mime_type = mime_type or 'application/octet-stream'
