@@ -629,7 +629,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'client', 'service', 'segment', 'source', 'statut', 'frequency',
             'frequency_label', 'date_intervention', 'heure_intervention',
-            'prix', 'is_devis', 'devis_statut', 'mode_paiement', 'statut_paiement',
+            'prix', 'montant_devis', 'montant_facture', 'is_devis', 'devis_statut', 'mode_paiement', 'statut_paiement',
             'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
             'part_agence', 'parts_repartition',
             'statut_paiement_ui', 'montant_ht', 'montant_ttc', 'montant_verse',

@@ -118,6 +118,8 @@ class Demande(models.Model):
 
     # Pricing
     prix = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Prix")
+    montant_devis = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Montant du devis")
+    montant_facture = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True, verbose_name="Montant de facture")
     is_devis = models.BooleanField(default=False, verbose_name="Sur devis")
     devis_statut = models.CharField(
         max_length=30, choices=DEVIS_STATUT_CHOICES, default=DEVIS_BROUILLON,
@@ -270,6 +272,25 @@ class Demande(models.Model):
             self.cao = 'oui'
         elif self.cao is False or self.cao == 'False' or not self.cao:
             self.cao = 'non'
+
+        if isinstance(self.formulaire_data, dict):
+            form = self.formulaire_data
+            dev_val = form.get('montant_devis') or form.get('montant_devis_base') or form.get('devis_total_base') or form.get('mensuel_base')
+            if self.montant_devis is None and dev_val is not None:
+                try:
+                    self.montant_devis = float(str(dev_val).replace(' ', '').replace(',', '.'))
+                except (ValueError, TypeError):
+                    pass
+            fac_val = form.get('montant_facture') or form.get('total_ttc') or form.get('montant_ttc')
+            if self.montant_facture is None and fac_val is not None:
+                try:
+                    self.montant_facture = float(str(fac_val).replace(' ', '').replace(',', '.'))
+                except (ValueError, TypeError):
+                    pass
+
+        if self.montant_devis is None and self.prix is not None:
+            self.montant_devis = self.prix
+
         super().save(*args, **kwargs)
 
     class Meta:

@@ -507,27 +507,50 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 logger.info(f"WhatsApp: Constructed media_url from DB: {media_url}")
             
             wa_media_type = 'document' if doc_type in ['devis', 'facture'] else 'image'
-            logger.info(f"WhatsApp: Final media_url={media_url}, type={wa_media_type}, phone={commercial_phone}")
-
-        # Définition des templates et variables
+            # Définition des templates et variables
         template = None
         vars = []
 
         # Helper : résoudre le prix depuis formulaire_data (calculateur frontend) ou demande.prix
         def _get_prix_display():
             form = demande.formulaire_data or {}
-            # Chercher dans formulaire_data (mêmes clés que le frontend getTotalPrice)
+            if doc_type == 'devis':
+                if demande.montant_devis is not None and float(demande.montant_devis) > 0:
+                    return f"{demande.montant_devis:,.0f}".replace(",", " ") + " MAD"
+                for key in ['montant_devis', 'montant_devis_base', 'devis_total_base', 'mensuel_base', 'prix']:
+                    val = form.get(key)
+                    if val is not None:
+                        try:
+                            n = float(str(val).replace(' ', '').replace(',', '.'))
+                            if n > 0:
+                                return f"{n:,.0f}".replace(",", " ") + " MAD"
+                        except (ValueError, TypeError):
+                            pass
+                if demande.prix is not None:
+                    return f"{demande.prix:,.0f}".replace(",", " ") + " MAD"
+            elif doc_type == 'facture':
+                if demande.montant_facture is not None and float(demande.montant_facture) > 0:
+                    return f"{demande.montant_facture:,.0f}".replace(",", " ") + " MAD"
+                for key in ['montant_facture', 'total_ttc', 'montant_ttc', 'montant_total', 'total', 'montant']:
+                    val = form.get(key)
+                    if val is not None:
+                        try:
+                            n = float(str(val).replace(' ', '').replace(',', '.'))
+                            if n > 0:
+                                return f"{n:,.0f}".replace(",", " ") + " MAD"
+                        except (ValueError, TypeError):
+                            pass
+
+            # Fallback général
             for key in ['total', 'total_ht', 'total_ttc', 'prix_total', 'montant_total', 'montant', 'prix']:
                 val = form.get(key)
                 if val is not None:
                     try:
                         n = float(str(val).replace(' ', '').replace(',', '.'))
                         if n > 0:
-                            # Formater avec séparateur de milliers
                             return f"{n:,.0f}".replace(",", " ") + " MAD"
                     except (ValueError, TypeError):
                         pass
-            # Fallback sur le champ prix du modèle
             if demande.prix is not None:
                 return f"{demande.prix:,.0f}".replace(",", " ") + " MAD"
             return "Sur devis"
