@@ -201,7 +201,7 @@ class PromoCode(models.Model):
                 except Exception as e:
                     logger.error(f"Error sending BD promo code email to {client.email}: {str(e)}")
 
-            # Send WhatsApp if configured
+            # Send WhatsApp to commercial (commercial is responsible for forwarding to client)
             from demandes.utils.whatsapp import WhatsAppService, get_commercial_for_client
             _, commercial_phone = get_commercial_for_client(client)
             if 'whatsapp' in (self.canaux or []) and commercial_phone:

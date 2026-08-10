@@ -26,6 +26,45 @@ from .filters import DemandeFilter
 from .utils.profile_card import generate_profile_card
 
 
+def calculate_statut_mois_prochain_py(today_day=None, statut_facturation=None, statut_paiement=None, explicit_override=None):
+    if today_day is None:
+        today_day = datetime.date.today().day
+
+    if explicit_override in ['Stand-by', 'Résilié']:
+        return explicit_override
+
+    is_paid = (statut_facturation == 'Payé') or (statut_paiement in [Demande.INTEGRAL, 'integral', 'paye', 'payee'])
+    if is_paid or explicit_override == 'Actif':
+        return 'Actif'
+
+    if today_day < 15:
+        if explicit_override and explicit_override not in ['Suspendu', 'En attente', 'Actif', 'Non défini']:
+            return explicit_override
+        return 'Non défini'
+
+    if 15 <= today_day <= 17:
+        if explicit_override in ['Facture envoyée', 'Actif']:
+            return explicit_override
+        return 'Facture envoyée'
+
+    if 18 <= today_day <= 22:
+        if explicit_override in ['1er rappel', 'Actif']:
+            return explicit_override
+        return '1er rappel'
+
+    if 23 <= today_day <= 26:
+        if explicit_override in ['2e rappel', 'Actif']:
+            return explicit_override
+        return '2e rappel'
+
+    if today_day >= 27:
+        if explicit_override in ['Suspendu', 'Actif']:
+            return explicit_override
+        return 'Suspendu'
+
+    return 'Non défini'
+
+
 class DemandeViewSet(viewsets.ModelViewSet):
     queryset = Demande.objects.select_related('client', 'assigned_to').prefetch_related('nrp_logs', 'documents')
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
@@ -1358,7 +1397,9 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
             com_name = d.assigned_to_name or "Kawtar"
 
             form_data = d.formulaire_data if isinstance(d.formulaire_data, dict) else {}
-            st_prochain = form_data.get('statut_mois_prochain') or ('Actif' if d.statut_paiement == Demande.PAYE else 'Suspendu')
+            raw_override = form_data.get('statut_mois_prochain')
+            st_fact = form_data.get('statut_facturation')
+            st_prochain = calculate_statut_mois_prochain_py(datetime.date.today().day, st_fact, d.statut_paiement, raw_override)
             st_en_cours = 'Actif' if d.statut != Demande.ANNULE else 'Terminé'
 
             if statut_en_cours and statut_en_cours != 'tous' and st_en_cours.lower() != statut_en_cours.lower():
@@ -1470,7 +1511,9 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
             client_name = d.client.display_name if d.client else "Client Inconnu"
             ville = d.client_city or d.client_neighborhood or "Casablanca"
             form_data = d.formulaire_data if isinstance(d.formulaire_data, dict) else {}
-            next_statut = form_data.get('statut_mois_prochain') or ("Actif" if d.statut_paiement == Demande.PAYE else "Suspendu")
+            raw_override = form_data.get('statut_mois_prochain')
+            st_fact = form_data.get('statut_facturation')
+            next_statut = calculate_statut_mois_prochain_py(datetime.date.today().day, st_fact, d.statut_paiement, raw_override)
             statut = "Payé" if d.statut_paiement == Demande.PAYE else "Non payé"
             montant = float(d.prix) if d.prix else 1944.0
 
@@ -1487,12 +1530,12 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
 
         if not results:
             results = [
-                {'id': 101, 'num': 'AM/F118/2026', 'client': 'Sofia BENNANI', 'ville': 'Casablanca - Racine', 'periode': 'Juillet', 'montant': '1 944 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'},
+                {'id': 101, 'num': 'AM/F118/2026', 'client': 'Sofia BENNANI', 'ville': 'Casablanca - Racine', 'periode': 'Juillet', 'montant': '1 944 DH', 'statut': 'Non payé', 'next_statut': 'Non défini'},
                 {'id': 102, 'num': 'AM/F121/2026', 'client': 'SMILE+ (bureaux)', 'ville': 'Casablanca - Maarif', 'periode': 'Juillet', 'montant': '2 851 DH', 'statut': 'Payé', 'next_statut': 'Actif'},
-                {'id': 103, 'num': 'AM/F103/2026', 'client': 'Rachid EL AMRANI', 'ville': 'Casablanca - Anfa', 'periode': 'Juin', 'montant': '1 512 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'},
-                {'id': 104, 'num': 'AM/F097/2026', 'client': 'Youssef KABBAJ', 'ville': 'Rabat - Agdal', 'periode': 'Juin', 'montant': '1 296 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'},
+                {'id': 103, 'num': 'AM/F103/2026', 'client': 'Rachid EL AMRANI', 'ville': 'Casablanca - Anfa', 'periode': 'Juin', 'montant': '1 512 DH', 'statut': 'Non payé', 'next_statut': 'Non défini'},
+                {'id': 104, 'num': 'AM/F097/2026', 'client': 'Youssef KABBAJ', 'ville': 'Rabat - Agdal', 'periode': 'Juin', 'montant': '1 296 DH', 'statut': 'Non payé', 'next_statut': 'Non défini'},
                 {'id': 105, 'num': 'AM/F124/2026', 'client': 'Famille TAZI (aux. vie)', 'ville': 'Casablanca', 'periode': 'Sem. 25', 'montant': '775 DH', 'statut': 'Payé', 'next_statut': 'Actif'},
-                {'id': 106, 'num': '—', 'client': 'RIAD DAR ZITOUNE', 'ville': 'Marrakech', 'periode': 'Juillet', 'montant': '2 566 DH', 'statut': 'Non payé', 'next_statut': 'Suspendu'}
+                {'id': 106, 'num': '—', 'client': 'RIAD DAR ZITOUNE', 'ville': 'Marrakech', 'periode': 'Juillet', 'montant': '2 566 DH', 'statut': 'Non payé', 'next_statut': 'Non défini'}
             ]
 
         return Response(results)
@@ -1501,7 +1544,9 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
     def abonnements_toggle_suspend(self, request, pk=None):
         demande = self.get_object()
         form_data = dict(demande.formulaire_data) if isinstance(demande.formulaire_data, dict) else {}
-        current = form_data.get('statut_mois_prochain') or ('Actif' if demande.statut_paiement == Demande.PAYE else 'Suspendu')
+        raw_override = form_data.get('statut_mois_prochain')
+        st_fact = form_data.get('statut_facturation')
+        current = calculate_statut_mois_prochain_py(datetime.date.today().day, st_fact, demande.statut_paiement, raw_override)
         new_statut = request.data.get('statut_mois_prochain')
         if not new_statut:
             new_statut = 'Suspendu' if current == 'Actif' else 'Actif'
@@ -1619,6 +1664,7 @@ def sync_subscription_child_demands(demande, planning):
 
     # 4. Synchronize Auto-Creation for Dates <= J-1 (Section 2.1):
     # If planned date <= Tomorrow (J-1 or Today or Past) and not created yet -> instantiate automatically!
+    planning_modified = False
     for date_iso, info in active_dates.items():
         ov = date_overrides.get(date_iso, {})
         statut = (ov.get('statut') or '').lower()
@@ -1630,9 +1676,34 @@ def sync_subscription_child_demands(demande, planning):
         date_val = info['date_val']
         # Rule 2.1: Instantiated if Date <= Tomorrow (J-1)
         if date_val <= tomorrow:
+            new_child = None
             if date_iso not in children_by_date:
                 new_child = clone_demand_for_date_time(demande, date_val, info['time'])
                 children_by_date[date_iso] = new_child
+            else:
+                new_child = children_by_date[date_iso]
+
+            if new_child:
+                # Synchronize demande_id into week JSON
+                for week in semaines:
+                    if isinstance(week, dict) and isinstance(week.get('jours'), dict):
+                        w_start = week.get('date_debut')
+                        if w_start:
+                            try:
+                                d_start = datetime.date.fromisoformat(w_start)
+                                days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+                                for offset, day_key in enumerate(days_order):
+                                    if d_start + datetime.timedelta(days=offset) == date_val:
+                                        day_info = week['jours'].get(day_key)
+                                        if isinstance(day_info, dict) and day_info.get('demande_id') != new_child.id:
+                                            day_info['demande_id'] = new_child.id
+                                            planning_modified = True
+                            except (ValueError, TypeError):
+                                pass
+
+    if planning_modified:
+        planning.semaines = semaines
+        planning.save(update_fields=['semaines'])
 
 
 def clone_demand_for_date_time(parent_demande, date_val, time_val):
