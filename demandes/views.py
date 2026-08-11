@@ -168,6 +168,28 @@ class DemandeViewSet(viewsets.ModelViewSet):
             self._log_action(None, 'feedback_skip_optout', demande)
             return
 
+        # Check frequency & service type:
+        # Skip automatic per-intervention feedback for Abonnements and Airbnb
+        is_abonnement = (demande.frequency == Demande.ABONNEMENT) or bool(demande.parent_demande)
+        service_lower = (demande.service or '').lower()
+        is_airbnb = 'airbnb' in service_lower or 'air bnb' in service_lower
+
+        if is_airbnb:
+            self._log_action(None, 'feedback_skip_airbnb', demande)
+            return
+
+        if is_abonnement:
+            # Check if this is the final child demand of the subscription month
+            is_final_sub_demand = False
+            if demande.parent_demande:
+                sibling_demands = list(Demande.objects.filter(parent_demande=demande.parent_demande).order_by('id'))
+                if sibling_demands and sibling_demands[-1].id == demande.id:
+                    is_final_sub_demand = True
+            
+            if not is_final_sub_demand:
+                self._log_action(None, 'feedback_skip_subscription_intermediate', demande)
+                return
+
         # Prepare variables for template 'demande_feedback_client_v1'
         client_name = client.display_name if client else demande.formulaire_data.get('nom', 'Client')
 
@@ -180,7 +202,8 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return
 
         from agencemenage.utils import encode_id
-        encoded_id = encode_id(demande.id)
+        target_id_for_link = demande.parent_demande if (is_abonnement and demande.parent_demande) else demande.id
+        encoded_id = encode_id(target_id_for_link)
         feedback_link = f"https://feedback.agencemenage.ma/feedback/{encoded_id}"
         vars = [client_name, feedback_link]
 
@@ -190,7 +213,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 template_name='demande_feedback_client_v1',
                 variables=vars
             )
-            self._log_action(None, 'auto_send_wa_feedback', demande, extra_data={'sent_to_commercial_phone': commercial_phone})
+            self._log_action(None, 'auto_send_wa_feedback', demande, extra_data={'sent_to_commercial_phone': commercial_phone, 'is_abonnement': is_abonnement})
         except Exception as e:
             import logging
             logger = logging.getLogger(__name__)
