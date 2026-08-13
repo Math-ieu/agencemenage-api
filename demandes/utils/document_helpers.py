@@ -79,39 +79,118 @@ def generate_demande_document(demande, doc_type, user=None, month_index=None):
             (not segment_val and not client_seg)
         )
 
-        # ── Gestion de la TVA (Non appliquée par défaut pour les particuliers) ──
-        tva_active_raw = form_data.get('tva_active')
-        if tva_active_raw is None:
-            tva_active_raw = form_data.get('apply_tva')
+        # ── 1. Vérification si une facture a été validée pour ce mois ──
+        validated_facture = None
+        factures_validees = form_data.get('factures_validees', [])
+        if isinstance(factures_validees, list) and len(factures_validees) > 0:
+            if month_index:
+                try:
+                    m_idx = int(month_index)
+                    for fv in factures_validees:
+                        if fv.get('month_index') == m_idx or fv.get('id') == f"M{m_idx}":
+                            validated_facture = fv
+                            break
+                except (ValueError, TypeError):
+                    pass
+            if not validated_facture and len(factures_validees) > 0:
+                validated_facture = factures_validees[-1]
 
-        if tva_active_raw is not None:
-            if isinstance(tva_active_raw, str):
-                tva_active = tva_active_raw.lower() in ['true', 'oui', '1']
+        # ── 2. Gestion de la TVA (Non appliquée par défaut pour les particuliers) ──
+        if validated_facture and validated_facture.get('tva_active') is not None:
+            tva_active = bool(validated_facture.get('tva_active'))
+            raw_tva = validated_facture.get('tva', 20)
+            try:
+                tva_rate = (float(raw_tva) / 100.0) if (tva_active and float(raw_tva) > 0) else 0.0
+            except (ValueError, TypeError):
+                tva_rate = 0.20 if tva_active else 0.0
+        else:
+            tva_active_raw = form_data.get('tva_active')
+            if tva_active_raw is None:
+                tva_active_raw = form_data.get('apply_tva')
+
+            if tva_active_raw is not None:
+                if isinstance(tva_active_raw, str):
+                    tva_active = tva_active_raw.lower() in ['true', 'oui', '1']
+                else:
+                    tva_active = bool(tva_active_raw)
             else:
-                tva_active = bool(tva_active_raw)
-        else:
-            # Règle : Pour les clients particuliers, ne jamais appliquer la TVA par défaut
-            tva_active = False if is_particulier else True
+                # Règle : Pour les clients particuliers, ne jamais appliquer la TVA par défaut
+                tva_active = False if is_particulier else True
 
-        if tva_active:
-            raw_tva = form_data.get('tva', form_data.get('tva_pct', form_data.get('tva_pourcentage', 20)))
-            try:
-                tva_rate = float(raw_tva) / 100.0 if float(raw_tva) > 0 else 0.20
-            except (ValueError, TypeError):
-                tva_rate = 0.20
-        else:
-            tva_rate = 0.0
+            if tva_active:
+                raw_tva = form_data.get('tva', form_data.get('tva_pct', form_data.get('tva_pourcentage', 20)))
+                try:
+                    tva_rate = float(raw_tva) / 100.0 if float(raw_tva) > 0 else 0.20
+                except (ValueError, TypeError):
+                    tva_rate = 0.20
+            else:
+                tva_rate = 0.0
 
-        # ── Décomposition Montant Service & Réduction ──
-        nb_passages = form_data.get('nombre_passages')
-        prix_unitaire = form_data.get('prix_unitaire')
-
+        # ── 3. Décomposition Montant Service & Réduction issue du Devis ──
+        nb_passages = None
+        prix_unitaire = None
         montant_service = None
-        if form_data.get('montant_service') is not None:
-            try:
-                montant_service = float(form_data.get('montant_service'))
-            except (ValueError, TypeError):
-                pass
+        remise_dh = 0.0
+        remise_pct = 0.0
+        reduction_label = None
+
+        if validated_facture:
+            nb_passages = validated_facture.get('nombre_passages')
+            prix_unitaire = validated_facture.get('prix_unitaire')
+            montant_service = validated_facture.get('montant_service')
+            remise_dh = float(validated_facture.get('remise_dh', validated_facture.get('remise', 0)) or 0.0)
+            remise_pct = float(validated_facture.get('remise_pct', 0) or 0.0)
+            reduction_label = validated_facture.get('reduction_label')
+        else:
+            nb_passages = form_data.get('nombre_passages')
+            prix_unitaire = form_data.get('prix_unitaire')
+
+            if form_data.get('montant_service') is not None:
+                try:
+                    montant_service = float(form_data.get('montant_service'))
+                except (ValueError, TypeError):
+                    pass
+
+            for r_k in ['remise_dh', 'remise', 'reduction_montant', 'remise_montant']:
+                if form_data.get(r_k) is not None:
+                    try:
+                        remise_dh = float(form_data.get(r_k))
+                        if remise_dh > 0:
+                            break
+                    except (ValueError, TypeError):
+                        pass
+
+            for p_k in ['remise_pct', 'reduction_pct', 'reduction_pourcentage', 'reduction_abonnement', 'taux_reduction', 'pourcentage_reduction']:
+                if form_data.get(p_k) is not None:
+                    try:
+                        remise_pct = float(form_data.get(p_k))
+                        if remise_pct > 0:
+                            break
+                    except (ValueError, TypeError):
+                        pass
+
+        # Si aucune réduction explicite n'a été trouvée et qu'il s'agit d'un abonnement
+        is_sub = (
+            getattr(demande, 'type_demande', '') == 'abonnement' or
+            'abonnement' in str(demande.service).lower() or
+            'semaine' in str(form_data.get('frequence', '')).lower() or
+            'semaine' in str(getattr(demande, 'frequency_label', '')).lower()
+        )
+
+        devis_total = float(demande.prix or form_data.get('montant_devis', form_data.get('total', 0)) or 0.0)
+
+        if remise_dh <= 0 and remise_pct <= 0 and is_sub and devis_total > 0:
+            # Réduction standard abonnement 10%
+            remise_pct = 10.0
+            if montant_service is None or montant_service <= 0:
+                montant_service = round(devis_total / 0.9, 2)
+            remise_dh = round(montant_service - devis_total, 2)
+            reduction_label = "10%"
+        elif remise_pct > 0 and remise_dh <= 0 and devis_total > 0:
+            if montant_service is None or montant_service <= 0:
+                montant_service = round(devis_total / (1.0 - remise_pct / 100.0), 2)
+            remise_dh = round(montant_service - devis_total, 2)
+            reduction_label = f"{remise_pct:.0f}%"
 
         if (montant_service is None or montant_service <= 0) and nb_passages and prix_unitaire:
             try:
@@ -119,58 +198,27 @@ def generate_demande_document(demande, doc_type, user=None, month_index=None):
             except (ValueError, TypeError):
                 pass
 
-        # Réduction
-        remise_dh = 0.0
-        remise_pct = 0.0
-        for r_k in ['remise_dh', 'remise', 'reduction_montant', 'remise_montant']:
-            if form_data.get(r_k) is not None:
-                try:
-                    remise_dh = float(form_data.get(r_k))
-                    if remise_dh > 0:
-                        break
-                except (ValueError, TypeError):
-                    pass
-
-        for p_k in ['remise_pct', 'reduction_pct', 'pourcentage_reduction']:
-            if form_data.get(p_k) is not None:
-                try:
-                    remise_pct = float(form_data.get(p_k))
-                    if remise_pct > 0:
-                        break
-                except (ValueError, TypeError):
-                    pass
-
-        if remise_pct > 0 and remise_dh <= 0 and montant_service and montant_service > 0:
-            remise_dh = round(montant_service * (remise_pct / 100.0), 2)
-
-        reduction_label = None
-        if remise_dh > 0:
-            if remise_pct > 0:
-                reduction_label = f"{remise_pct:.0f}%"
-            elif montant_service and montant_service > 0:
-                calc_pct = round((remise_dh / montant_service) * 100)
-                if calc_pct > 0:
-                    reduction_label = f"{calc_pct}%"
-
-        total_ht_form = float(form_data.get('total_ht', form_data.get('montant_ht', 0)) or 0.0)
-        total_ttc_form = float(form_data.get('total_ttc', form_data.get('montant_ttc', form_data.get('montant_final', demande.prix or 0))) or 0.0)
-
         if montant_service is None or montant_service <= 0:
-            if total_ht_form > 0:
-                montant_service = total_ht_form + remise_dh
-            elif total_ttc_form > 0:
-                if tva_active and tva_rate > 0:
-                    montant_service = round(total_ttc_form / (1.0 + tva_rate), 2) + remise_dh
-                else:
-                    montant_service = total_ttc_form + remise_dh
-            elif demande.prix:
-                montant_service = float(demande.prix)
+            if devis_total > 0:
+                montant_service = devis_total + remise_dh
             else:
                 montant_service = 0.0
 
-        designation = f"{demande.service}"
-        if nb_passages and prix_unitaire:
-            designation = f"{demande.service} ({nb_passages} passages × {prix_unitaire} DH)"
+        if remise_dh > 0 and not reduction_label:
+            if remise_pct > 0:
+                reduction_label = f"{remise_pct:.0f}%"
+            elif montant_service > 0:
+                calc_pct = round((remise_dh / montant_service) * 100)
+                reduction_label = f"{calc_pct}%" if calc_pct > 0 else f"{remise_dh:.0f} MAD"
+
+        # ── 4. Libellé et items ──
+        pu_val = float(prix_unitaire) if prix_unitaire else (round(montant_service / float(nb_passages), 2) if nb_passages and float(nb_passages) > 0 else 0.0)
+        
+        if nb_passages and pu_val > 0:
+            pu_str = f"{pu_val:,.2f}".replace(",", " ").rstrip('0').rstrip('.')
+            designation = f"{demande.service} ({nb_passages} passages × {pu_str} DH)"
+        else:
+            designation = f"{demande.service}"
 
         if month_index:
             try:
