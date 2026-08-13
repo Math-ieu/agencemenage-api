@@ -70,30 +70,104 @@ def generate_demande_document(demande, doc_type, user=None, month_index=None):
         filename = f"DEVIS_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
         db_content_type = Document.DEVIS
     elif doc_type == 'facture':
-        total_ht = float(form_data.get('total_ht', form_data.get('montant_ht', 0)) or 0.0)
-        total_ttc = float(form_data.get('total_ttc', form_data.get('montant_ttc', form_data.get('montant_final', demande.prix or 0))) or 0.0)
-        
-        raw_tva = form_data.get('tva', form_data.get('tva_pct', form_data.get('tva_pourcentage')))
-        if raw_tva is not None and raw_tva != '':
+        segment_val = (demande.segment or '').lower()
+        client_seg = getattr(client, 'segment', '') if client else ''
+        is_particulier = (
+            segment_val in ['particulier', 'spp'] or 
+            (client_seg and client_seg.lower() == 'particulier') or 
+            (str(form_data.get('segment', '')).lower() == 'particulier') or
+            (not segment_val and not client_seg)
+        )
+
+        # ── Gestion de la TVA (Non appliquée par défaut pour les particuliers) ──
+        tva_active_raw = form_data.get('tva_active')
+        if tva_active_raw is None:
+            tva_active_raw = form_data.get('apply_tva')
+
+        if tva_active_raw is not None:
+            if isinstance(tva_active_raw, str):
+                tva_active = tva_active_raw.lower() in ['true', 'oui', '1']
+            else:
+                tva_active = bool(tva_active_raw)
+        else:
+            # Règle : Pour les clients particuliers, ne jamais appliquer la TVA par défaut
+            tva_active = False if is_particulier else True
+
+        if tva_active:
+            raw_tva = form_data.get('tva', form_data.get('tva_pct', form_data.get('tva_pourcentage', 20)))
             try:
-                tva_rate = float(raw_tva) / 100.0
+                tva_rate = float(raw_tva) / 100.0 if float(raw_tva) > 0 else 0.20
             except (ValueError, TypeError):
                 tva_rate = 0.20
-        elif form_data.get('tva_active') is False:
-            tva_rate = 0.00
         else:
-            tva_rate = 0.20
+            tva_rate = 0.0
 
-        # If total_ht is equal to total_ttc or invalid, recalculate HT from TTC and TVA rate
-        if total_ht <= 0 or (abs(total_ht - total_ttc) < 0.01 and tva_rate > 0):
-            if total_ttc > 0:
-                total_ht = round(total_ttc / (1.0 + tva_rate), 2) if tva_rate > 0 else total_ttc
-            elif demande.prix:
-                total_ht = round(float(demande.prix) / (1.0 + tva_rate), 2) if tva_rate > 0 else float(demande.prix)
-
-        nb_passages = form_data.get('nombre_passages', 6)
+        # ── Décomposition Montant Service & Réduction ──
+        nb_passages = form_data.get('nombre_passages')
         prix_unitaire = form_data.get('prix_unitaire')
-        
+
+        montant_service = None
+        if form_data.get('montant_service') is not None:
+            try:
+                montant_service = float(form_data.get('montant_service'))
+            except (ValueError, TypeError):
+                pass
+
+        if (montant_service is None or montant_service <= 0) and nb_passages and prix_unitaire:
+            try:
+                montant_service = round(float(nb_passages) * float(prix_unitaire), 2)
+            except (ValueError, TypeError):
+                pass
+
+        # Réduction
+        remise_dh = 0.0
+        remise_pct = 0.0
+        for r_k in ['remise_dh', 'remise', 'reduction_montant', 'remise_montant']:
+            if form_data.get(r_k) is not None:
+                try:
+                    remise_dh = float(form_data.get(r_k))
+                    if remise_dh > 0:
+                        break
+                except (ValueError, TypeError):
+                    pass
+
+        for p_k in ['remise_pct', 'reduction_pct', 'pourcentage_reduction']:
+            if form_data.get(p_k) is not None:
+                try:
+                    remise_pct = float(form_data.get(p_k))
+                    if remise_pct > 0:
+                        break
+                except (ValueError, TypeError):
+                    pass
+
+        if remise_pct > 0 and remise_dh <= 0 and montant_service and montant_service > 0:
+            remise_dh = round(montant_service * (remise_pct / 100.0), 2)
+
+        reduction_label = None
+        if remise_dh > 0:
+            if remise_pct > 0:
+                reduction_label = f"{remise_pct:.0f}%"
+            elif montant_service and montant_service > 0:
+                calc_pct = round((remise_dh / montant_service) * 100)
+                if calc_pct > 0:
+                    reduction_label = f"{calc_pct}%"
+
+        total_ht_form = float(form_data.get('total_ht', form_data.get('montant_ht', 0)) or 0.0)
+        total_ttc_form = float(form_data.get('total_ttc', form_data.get('montant_ttc', form_data.get('montant_final', demande.prix or 0))) or 0.0)
+
+        if montant_service is None or montant_service <= 0:
+            if total_ht_form > 0:
+                montant_service = total_ht_form + remise_dh
+            elif total_ttc_form > 0:
+                if tva_active and tva_rate > 0:
+                    montant_service = round(total_ttc_form / (1.0 + tva_rate), 2) + remise_dh
+                else:
+                    montant_service = total_ttc_form + remise_dh
+            elif demande.prix:
+                montant_service = float(demande.prix)
+            else:
+                montant_service = 0.0
+
         designation = f"{demande.service}"
         if nb_passages and prix_unitaire:
             designation = f"{demande.service} ({nb_passages} passages × {prix_unitaire} DH)"
@@ -111,7 +185,7 @@ def generate_demande_document(demande, doc_type, user=None, month_index=None):
             filename = f"FACTURE_{client_nom.replace(' ', '_')}_{demande.pk}.pdf"
 
         items = [
-            InvoiceItem(designation, total_ht)
+            InvoiceItem(designation, montant_service)
         ]
             
         invoice_data = InvoiceData(
@@ -123,6 +197,10 @@ def generate_demande_document(demande, doc_type, user=None, month_index=None):
             service_type=demande.service if not month_index else f"{demande.service} - Mois {month_index}",
             frequency=resolve_frequency_label(demande),
             items=items,
+            montant_service=montant_service,
+            reduction_label=reduction_label,
+            reduction_amount=remise_dh,
+            tva_active=tva_active,
             tva_rate=tva_rate
         )
         

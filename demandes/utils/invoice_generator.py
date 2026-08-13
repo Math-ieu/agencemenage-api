@@ -52,24 +52,46 @@ class InvoiceItem:
 
 @dataclass
 class InvoiceData:
-    invoice_number:  str
-    invoice_date:    date
-    client_name:     str
-    client_ice:      str
-    client_address:  str
-    service_type:    str
-    frequency:       str
-    items:           List[InvoiceItem]
-    tva_rate:        float = 0.20
-    logo_path:       Optional[str] = None
-    signature_path:  Optional[str] = None
+    invoice_number:   str
+    invoice_date:     date
+    client_name:      str
+    client_ice:       str
+    client_address:   str
+    service_type:     str
+    frequency:        str
+    items:            List[InvoiceItem]
+    montant_service:  Optional[float] = None
+    reduction_label:  Optional[str] = None
+    reduction_amount: float = 0.0
+    tva_active:       bool = True
+    tva_rate:         float = 0.20
+    logo_path:        Optional[str] = None
+    signature_path:   Optional[str] = None
 
     @property
-    def total_ht(self):    return sum(i.amount for i in self.items)
+    def total_brut(self):
+        if self.montant_service is not None and self.montant_service > 0:
+            return float(self.montant_service)
+        return sum(i.amount for i in self.items)
+
     @property
-    def tva_amount(self):  return round(float(self.total_ht) * self.tva_rate, 2)
+    def total_ht(self):
+        return max(0.0, float(self.total_brut) - float(self.reduction_amount))
+
     @property
-    def total_ttc(self):   return float(self.total_ht) + self.tva_amount
+    def tva_amount(self):
+        if not self.tva_active or self.tva_rate <= 0:
+            return 0.0
+        return round(float(self.total_ht) * self.tva_rate, 2)
+
+    @property
+    def net_a_payer(self):
+        return float(self.total_ht) + self.tva_amount
+
+    @property
+    def total_ttc(self):
+        return self.net_a_payer
+
     def get_logo_path(self):      return self.logo_path or os.path.join(settings.BASE_DIR, "assets", "logo.png")
     def get_signature_path(self): return self.signature_path or os.path.join(settings.BASE_DIR, "assets", "signature.png")
 
@@ -194,8 +216,8 @@ class InvoiceGenerator:
     def _build_items_table(self) -> Table:
         d = self.data
         col_w = self.PAGE_W - 2 * self.MARGIN
-        DES_W = col_w * 0.70
-        AMT_W = col_w * 0.30
+        DES_W = col_w * 0.65
+        AMT_W = col_w * 0.35
 
         rows = [[
             self._p("<b>Désignation</b>", self.sHdrC),
@@ -205,22 +227,46 @@ class InvoiceGenerator:
         for item in d.items:
             rows.append([
                 self._p(item.designation),
-                self._p(self._fmt(item.amount), self.sAmtR),
+                self._p(f"{self._fmt(item.amount)} MAD", self.sAmtR),
             ])
 
         rows.append([Spacer(1, 4*mm), ""])
 
+        # Montant du service
         rows.append([
-            self._p("Total HT:", ParagraphStyle("tht", parent=self.sNormal, alignment=TA_RIGHT)),
-            self._p(self._fmt(d.total_ht), self.sAmtR),
+            self._p("Montant du service :", ParagraphStyle("ms", parent=self.sNormal, alignment=TA_RIGHT, fontName="Helvetica-Bold")),
+            self._p(f"{self._fmt(d.total_brut)} MAD", self.sAmtR),
         ])
+
+        # Réduction appliquée si présente
+        if d.reduction_amount > 0:
+            reduc_text = "Réduction appliquée :"
+            if d.reduction_label:
+                reduc_text = f"Réduction appliquée ({d.reduction_label}) :"
+            rows.append([
+                self._p(reduc_text, ParagraphStyle("mred", parent=self.sNormal, alignment=TA_RIGHT, textColor=colors.HexColor("#c53030"))),
+                self._p(f"− {self._fmt(d.reduction_amount)} MAD", ParagraphStyle("mredv", parent=self.sNormal, alignment=TA_RIGHT, textColor=colors.HexColor("#c53030"))),
+            ])
+
+        # Total HT (affiché si réduction ou si TVA active)
+        if d.reduction_amount > 0 or (d.tva_active and d.tva_rate > 0):
+            rows.append([
+                self._p("Total HT :", ParagraphStyle("tht", parent=self.sNormal, alignment=TA_RIGHT)),
+                self._p(f"{self._fmt(d.total_ht)} MAD", self.sAmtR),
+            ])
+
+        # TVA (uniquement si l'option TVA est activée)
+        if d.tva_active and d.tva_rate > 0:
+            rows.append([
+                self._p(f"TVA {int(round(d.tva_rate*100))}% :", ParagraphStyle("ttva", parent=self.sNormal, alignment=TA_RIGHT)),
+                self._p(f"{self._fmt(d.tva_amount)} MAD", self.sAmtR),
+            ])
+
+        # Net à payer
+        net_label = "NET À PAYER (T.T.C) :" if (d.tva_active and d.tva_rate > 0) else "NET À PAYER :"
         rows.append([
-            self._p(f"TVA {int(d.tva_rate*100)}%:", ParagraphStyle("ttva", parent=self.sNormal, alignment=TA_RIGHT)),
-            self._p(self._fmt(d.tva_amount), self.sAmtR),
-        ])
-        rows.append([
-            self._p("MONTANT TOTAL A PAYER T.T.C :", self.sTTCl),
-            self._p(f"<b>{self._fmt(d.total_ttc)} MAD</b>", self.sTTCv),
+            self._p(net_label, self.sTTCl),
+            self._p(f"<b>{self._fmt(d.net_a_payer)} MAD</b>", self.sTTCv),
         ])
 
         n        = len(rows)
