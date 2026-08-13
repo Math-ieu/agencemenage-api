@@ -1290,66 +1290,6 @@ class DemandeViewSet(viewsets.ModelViewSet):
             'planning': SubscriptionPlanningSerializer(planning).data
         })
 
-
-class PublicDemandeCreateView(viewsets.GenericViewSet):
-    """Endpoint public pour créer une demande depuis le site web."""
-    permission_classes = [AllowAny]
-    serializer_class = PublicDemandeCreateSerializer
-
-    def create(self, request):
-        serializer = self.get_serializer(data=request.data)
-        serializer.is_valid(raise_exception=True)
-        demande = serializer.save()
-        return Response({'id': demande.pk, 'statut': demande.statut}, status=status.HTTP_201_CREATED)
-
-
-class DocumentViewSet(viewsets.ModelViewSet):
-    queryset = Document.objects.all()
-    serializer_class = DocumentSerializer
-    permission_classes = [IsAuthenticated]
-
-    def perform_create(self, serializer):
-        serializer.save(created_by=self.request.user)
-
-
-class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
-    queryset = AuditLog.objects.select_related('user').all()
-    serializer_class = AuditLogSerializer
-    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
-    filterset_fields = ['model_name', 'action', 'object_id']
-    ordering = ['-timestamp']
-
-
-class AppNotificationViewSet(viewsets.ModelViewSet):
-    queryset = AppNotification.objects.all()
-    serializer_class = AppNotificationSerializer
-    permission_classes = [IsAuthenticated]
-
-    def get_queryset(self):
-        user = self.request.user
-        if not user.is_authenticated:
-            return AppNotification.objects.none()
-        
-        if user.is_staff or user.role == 'admin':
-            return AppNotification.objects.all()
-            
-        notifications = AppNotification.objects.only('id', 'target_roles')
-        allowed_ids = []
-        for n in notifications:
-            roles = n.target_roles
-            # If target_roles is empty or contains the user's role (check case-insensitively or exact)
-            if not roles or any(str(r).lower() == str(user.role).lower() for r in roles):
-                allowed_ids.append(n.id)
-        return AppNotification.objects.filter(id__in=allowed_ids)
-
-    def list(self, request, *args, **kwargs):
-        queryset = self.filter_queryset(self.get_queryset())
-        # Bypasse la pagination par défaut pour renvoyer une liste propre au widget NotificationBell
-        queryset = queryset[:100]
-        serializer = self.get_serializer(queryset, many=True)
-        return Response(serializer.data)
-
-
     @action(detail=False, methods=['get'], url_path='abonnements/vue-ensemble')
     def abonnements_vue_ensemble(self, request):
         qs = self.get_queryset().filter(
@@ -1390,8 +1330,34 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
         results = []
         for d in qs:
             planning = getattr(d, 'planning', None)
-            jours = planning.jours_intervention if planning and planning.jours_intervention else ['lundi', 'jeudi']
-            date_debut = planning.date_debut if planning else (d.date_intervention or datetime.date.today())
+            form_data = d.formulaire_data if isinstance(d.formulaire_data, dict) else {}
+            
+            # Read jours from planning first, then formulaire_data, then fallback
+            if planning and planning.jours_intervention:
+                jours = planning.jours_intervention
+            elif isinstance(form_data.get('jours_intervention'), list) and form_data['jours_intervention']:
+                jours = form_data['jours_intervention']
+            else:
+                jours = ['lundi', 'jeudi']
+            
+            # Read start date from formulaire_data first, then planning, then date_intervention, then today
+            date_debut_str = form_data.get('date_demarrage') or form_data.get('date_debut')
+            if date_debut_str:
+                try:
+                    date_debut = datetime.date.fromisoformat(str(date_debut_str)[:10])
+                except (ValueError, TypeError):
+                    date_debut = None
+            else:
+                date_debut = None
+            
+            if not date_debut:
+                if planning and planning.date_debut:
+                    date_debut = planning.date_debut
+                elif d.date_intervention:
+                    date_debut = d.date_intervention
+                else:
+                    date_debut = datetime.date.today()
+            
             date_fin = planning.date_fin if planning else None
 
             is_mid_month = date_debut.day > 1 if date_debut else False
@@ -1575,12 +1541,23 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
             new_statut = 'Suspendu' if current == 'Actif' else 'Actif'
 
         form_data['statut_mois_prochain'] = new_statut
-        demande.formulaire_data = form_data
         
         if new_statut == 'Actif':
             demande.statut_paiement = Demande.PAYE
-        else:
-            demande.statut_paiement = Demande.NON_PAYE
+            form_data['statut_facturation'] = 'Payé'
+            if isinstance(form_data.get('facturation'), dict):
+                form_data['facturation']['statut_facturation'] = 'Payé'
+                form_data['facturation']['statut_paiement_ui'] = 'paye'
+        elif new_statut in ['Suspendu', 'Stand-by', 'Résilié', 'Non défini']:
+            if form_data.get('statut_facturation') == 'Payé':
+                form_data['statut_facturation'] = 'Non défini'
+            if isinstance(form_data.get('facturation'), dict) and form_data['facturation'].get('statut_facturation') == 'Payé':
+                form_data['facturation']['statut_facturation'] = 'Non défini'
+                form_data['facturation']['statut_paiement_ui'] = 'non_paye'
+            if demande.statut_paiement == Demande.PAYE:
+                demande.statut_paiement = Demande.NON_PAYE
+
+        demande.formulaire_data = form_data
         demande.save()
 
         from clients.models import ClientActionLog
@@ -1601,6 +1578,10 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
         demande.statut_paiement = Demande.PAYE
         form_data = dict(demande.formulaire_data) if isinstance(demande.formulaire_data, dict) else {}
         form_data['statut_mois_prochain'] = 'Actif'
+        form_data['statut_facturation'] = 'Payé'
+        if isinstance(form_data.get('facturation'), dict):
+            form_data['facturation']['statut_facturation'] = 'Payé'
+            form_data['facturation']['statut_paiement_ui'] = 'paye'
         demande.formulaire_data = form_data
         demande.save()
 
@@ -1615,6 +1596,65 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
             )
 
         return Response({'id': demande.id, 'statut_paiement': Demande.PAYE, 'statut_mois_prochain': 'Actif'})
+
+
+class PublicDemandeCreateView(viewsets.GenericViewSet):
+    """Endpoint public pour créer une demande depuis le site web."""
+    permission_classes = [AllowAny]
+    serializer_class = PublicDemandeCreateSerializer
+
+    def create(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        demande = serializer.save()
+        return Response({'id': demande.pk, 'statut': demande.statut}, status=status.HTTP_201_CREATED)
+
+
+class DocumentViewSet(viewsets.ModelViewSet):
+    queryset = Document.objects.all()
+    serializer_class = DocumentSerializer
+    permission_classes = [IsAuthenticated]
+
+    def perform_create(self, serializer):
+        serializer.save(created_by=self.request.user)
+
+
+class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
+    queryset = AuditLog.objects.select_related('user').all()
+    serializer_class = AuditLogSerializer
+    filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
+    filterset_fields = ['model_name', 'action', 'object_id']
+    ordering = ['-timestamp']
+
+
+class AppNotificationViewSet(viewsets.ModelViewSet):
+    queryset = AppNotification.objects.all()
+    serializer_class = AppNotificationSerializer
+    permission_classes = [IsAuthenticated]
+
+    def get_queryset(self):
+        user = self.request.user
+        if not user.is_authenticated:
+            return AppNotification.objects.none()
+        
+        if user.is_staff or user.role == 'admin':
+            return AppNotification.objects.all()
+            
+        notifications = AppNotification.objects.only('id', 'target_roles')
+        allowed_ids = []
+        for n in notifications:
+            roles = n.target_roles
+            # If target_roles is empty or contains the user's role (check case-insensitively or exact)
+            if not roles or any(str(r).lower() == str(user.role).lower() for r in roles):
+                allowed_ids.append(n.id)
+        return AppNotification.objects.filter(id__in=allowed_ids)
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.filter_queryset(self.get_queryset())
+        # Bypasse la pagination par défaut pour renvoyer une liste propre au widget NotificationBell
+        queryset = queryset[:100]
+        serializer = self.get_serializer(queryset, many=True)
+        return Response(serializer.data)
 
 
 def sync_subscription_child_demands(demande, planning):

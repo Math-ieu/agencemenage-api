@@ -81,6 +81,7 @@ class Demande(models.Model):
     ACOMPTE = 'acompte'
     PARTIEL = 'partiel'
     INTEGRAL = 'integral'
+    PAYE = INTEGRAL  # Alias used by views.py endpoints
     EN_ATTENTE = 'en_attente'
     INTERVENTION_GRATUITE = 'intervention_gratuite'
     FACTURATION_ANNULEE = 'facturation_annulee'

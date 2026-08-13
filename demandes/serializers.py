@@ -414,6 +414,26 @@ class DemandeSerializer(serializers.ModelSerializer):
     def update(self, instance, validated_data):
         self._stamp_parts_repartition(instance, validated_data)
         
+        # Safely merge partial updates to formulaire_data with existing dictionary
+        if 'formulaire_data' in validated_data and isinstance(validated_data['formulaire_data'], dict):
+            existing_fd = dict(instance.formulaire_data) if isinstance(instance.formulaire_data, dict) else {}
+            new_fd = validated_data['formulaire_data']
+            merged_fd = {**existing_fd, **new_fd}
+
+            # Keep nested facturation dict in sync if present
+            if isinstance(merged_fd.get('facturation'), dict):
+                fact_dict = dict(merged_fd['facturation'])
+                st_fact = merged_fd.get('statut_facturation')
+                if st_fact == 'Payé':
+                    fact_dict['statut_facturation'] = 'Payé'
+                    fact_dict['statut_paiement_ui'] = 'paye'
+                elif st_fact in ['Non défini', 'Non payé']:
+                    fact_dict['statut_facturation'] = st_fact
+                    fact_dict['statut_paiement_ui'] = 'non_paye'
+                merged_fd['facturation'] = fact_dict
+
+            validated_data['formulaire_data'] = merged_fd
+
         # Synchronize cleaner/personnel count and duration fields inside formulaire_data
         form_data = validated_data.get('formulaire_data')
         if isinstance(form_data, dict):
