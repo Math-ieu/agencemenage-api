@@ -48,6 +48,7 @@ urlpatterns = [
     # API routes
     path('api/', include(router.urls)),
     path('api/marketing/', include('marketing.urls')),
+    path('api/airbnb/', include('airbnb.urls')),
 
     # Auth endpoints
     path('api/auth/login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
