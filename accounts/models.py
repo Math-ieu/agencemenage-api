@@ -27,6 +27,9 @@ class User(AbstractBaseUser, PermissionsMixin):
     RESPONSABLE_OPERATIONS = 'responsable_operations'
     CHARGE_OPERATIONS = 'charge_operations'
     OPERATIONNEL = 'operationnel'
+    RUNNER = 'runner'
+    RESPONSABLE_LINGE = 'responsable_linge'
+    CLIENT_CONCIERGERIE = 'client_conciergerie'
 
     ROLE_CHOICES = [
         (ADMIN, 'Administrateur'),
@@ -36,6 +39,9 @@ class User(AbstractBaseUser, PermissionsMixin):
         (RESPONSABLE_OPERATIONS, 'Responsable des Opérations'),
         (CHARGE_OPERATIONS, 'Chargée des Opérations'),
         (OPERATIONNEL, 'Opérationnel'),
+        (RUNNER, 'Runner / Chauffeur Livreur'),
+        (RESPONSABLE_LINGE, 'Responsable Linge / Blanchisserie'),
+        (CLIENT_CONCIERGERIE, 'Client Conciergerie'),
     ]
 
     email = models.EmailField(unique=True)
