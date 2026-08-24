@@ -1,3 +1,4 @@
+import datetime
 from rest_framework import serializers
 from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse
 from django.conf import settings
@@ -403,11 +404,76 @@ class DemandeSerializer(serializers.ModelSerializer):
         if 'preference_horaire' in form_data:
             validated_data['preference_horaire'] = form_data['preference_horaire']
 
+        # Resolve canonical start date and ensure bidirectional sync on creation
+        if isinstance(form_data, dict):
+            start_date_val = (
+                form_data.get('date_demarrage') or 
+                form_data.get('date_debut') or 
+                validated_data.get('date_intervention') or 
+                form_data.get('date') or 
+                form_data.get('schedulingDate')
+            )
+            if start_date_val:
+                try:
+                    iso_date_str = str(start_date_val)[:10]
+                    valid_date = datetime.date.fromisoformat(iso_date_str)
+                    if not validated_data.get('date_intervention'):
+                        validated_data['date_intervention'] = valid_date
+                    form_data['date_demarrage'] = iso_date_str
+                    form_data['date_debut'] = iso_date_str
+                    form_data['date'] = iso_date_str
+                except (ValueError, TypeError):
+                    pass
+            validated_data['formulaire_data'] = form_data
+
         instance = super().create(validated_data)
 
         # Auto-escalade du statut devis vers « en attente validation » sur cas complexes (brief)
         if instance.apply_devis_auto_validation():
             instance.save(update_fields=['devis_statut'])
+
+        # If subscription, automatically create or sync SubscriptionPlanning record
+        if instance.frequency == Demande.ABONNEMENT or instance.parent_demande:
+            start_d = instance.date_intervention
+            if not start_d and isinstance(instance.formulaire_data, dict):
+                sd_str = instance.formulaire_data.get('date_demarrage') or instance.formulaire_data.get('date_debut')
+                if sd_str:
+                    try:
+                        start_d = datetime.date.fromisoformat(str(sd_str)[:10])
+                    except (ValueError, TypeError):
+                        pass
+            if not start_d:
+                start_d = datetime.date.today()
+
+            jours = []
+            if isinstance(instance.formulaire_data, dict):
+                jours = instance.formulaire_data.get('jours_intervention') or []
+            if not jours:
+                jours = ['lundi', 'jeudi']
+
+            planning_obj, _ = SubscriptionPlanning.objects.get_or_create(
+                demande=instance,
+                defaults={
+                    'date_debut': start_d,
+                    'jours_intervention': jours,
+                    'statut': 'en_cours',
+                }
+            )
+            planning_updated = False
+            if planning_obj.date_debut != start_d:
+                planning_obj.date_debut = start_d
+                planning_updated = True
+            if planning_obj.jours_intervention != jours:
+                planning_obj.jours_intervention = jours
+                planning_updated = True
+            if planning_updated:
+                planning_obj.save()
+
+            try:
+                from .views import sync_subscription_child_demands
+                sync_subscription_child_demands(instance, planning_obj)
+            except Exception:
+                pass
 
         return instance
 
@@ -530,12 +596,91 @@ class DemandeSerializer(serializers.ModelSerializer):
         if target_client and 'segment' in validated_data:
             target_client.segment = validated_data['segment']
             target_client.save()
+
+        # Resolve canonical start date and ensure bidirectional sync on update
+        if 'formulaire_data' in validated_data and isinstance(validated_data['formulaire_data'], dict):
+            form_data = validated_data['formulaire_data']
+            start_date_val = (
+                form_data.get('date_demarrage') or 
+                form_data.get('date_debut') or 
+                validated_data.get('date_intervention') or 
+                form_data.get('date') or 
+                form_data.get('schedulingDate')
+            )
+            if start_date_val:
+                try:
+                    iso_date_str = str(start_date_val)[:10]
+                    valid_date = datetime.date.fromisoformat(iso_date_str)
+                    if 'date_intervention' in validated_data and not validated_data['date_intervention']:
+                        validated_data['date_intervention'] = valid_date
+                    elif 'date_intervention' not in validated_data and not instance.date_intervention:
+                        validated_data['date_intervention'] = valid_date
+                    form_data['date_demarrage'] = iso_date_str
+                    form_data['date_debut'] = iso_date_str
+                    form_data['date'] = iso_date_str
+                except (ValueError, TypeError):
+                    pass
                     
         instance = super().update(instance, validated_data)
 
         # Auto-escalade du statut devis vers « en attente validation » sur cas complexes (brief)
         if instance.apply_devis_auto_validation():
             instance.save(update_fields=['devis_statut'])
+
+        # If subscription, automatically sync SubscriptionPlanning record
+        if instance.frequency == Demande.ABONNEMENT or instance.parent_demande:
+            start_d = instance.date_intervention
+            if not start_d and isinstance(instance.formulaire_data, dict):
+                sd_str = instance.formulaire_data.get('date_demarrage') or instance.formulaire_data.get('date_debut')
+                if sd_str:
+                    try:
+                        start_d = datetime.date.fromisoformat(str(sd_str)[:10])
+                    except (ValueError, TypeError):
+                        pass
+            if not start_d:
+                start_d = datetime.date.today()
+
+            jours = []
+            if isinstance(instance.formulaire_data, dict):
+                jours = instance.formulaire_data.get('jours_intervention') or []
+            if not jours:
+                jours = ['lundi', 'jeudi']
+
+            planning_obj, _ = SubscriptionPlanning.objects.get_or_create(
+                demande=instance,
+                defaults={
+                    'date_debut': start_d,
+                    'jours_intervention': jours,
+                    'statut': 'en_cours',
+                }
+            )
+            update_fields = []
+            if planning_obj.date_debut != start_d:
+                planning_obj.date_debut = start_d
+                update_fields.append('date_debut')
+            if planning_obj.jours_intervention != jours:
+                planning_obj.jours_intervention = jours
+                update_fields.append('jours_intervention')
+            if update_fields:
+                planning_obj.save(update_fields=update_fields)
+
+            try:
+                from .views import sync_subscription_child_demands
+                sync_subscription_child_demands(instance, planning_obj)
+            except Exception:
+                pass
+
+            # If parent demand status changed (e.g. termine / annule / etc.), sync into date_overrides & matching child
+            if instance.parent_demande is None and instance.date_intervention and isinstance(instance.formulaire_data, dict):
+                start_iso = instance.date_intervention.isoformat()
+                current_st = instance.statut
+                if current_st in ['termine', 'terminee', 'pres_terminee', 'annule', 'annulee', 'reporte', 'reportee']:
+                    overrides = instance.formulaire_data.setdefault('date_overrides', {})
+                    existing_ov = overrides.get(start_iso) or {}
+                    if existing_ov.get('statut') != current_st:
+                        overrides[start_iso] = {**existing_ov, 'statut': current_st}
+                        instance.save(update_fields=['formulaire_data'])
+                    Demande.objects.filter(parent_demande=instance, date_intervention=instance.date_intervention).update(statut=current_st)
 
         # ─── WhatsApp / Document Integration ───
         if regenerer_devis or envoyer_whatsapp:
