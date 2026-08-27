@@ -124,6 +124,9 @@ class Command(BaseCommand):
         }
         tomorrow_day_name = days_map[tomorrow.weekday()]
         
+        from demandes.views import sync_all_active_subscriptions
+        sync_all_active_subscriptions()
+
         plannings = SubscriptionPlanning.objects.filter(statut='en_cours')
         self.stdout.write(f"Scannage de {plannings.count()} plannings d'abonnement en cours...")
         

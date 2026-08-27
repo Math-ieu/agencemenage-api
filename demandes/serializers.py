@@ -432,8 +432,8 @@ class DemandeSerializer(serializers.ModelSerializer):
         if instance.apply_devis_auto_validation():
             instance.save(update_fields=['devis_statut'])
 
-        # If subscription, automatically create or sync SubscriptionPlanning record
-        if instance.frequency == Demande.ABONNEMENT or instance.parent_demande:
+        # If subscription ROOT demand, automatically create or sync SubscriptionPlanning record
+        if instance.parent_demande is None and instance.frequency == Demande.ABONNEMENT:
             start_d = instance.date_intervention
             if not start_d and isinstance(instance.formulaire_data, dict):
                 sd_str = instance.formulaire_data.get('date_demarrage') or instance.formulaire_data.get('date_debut')
@@ -445,11 +445,8 @@ class DemandeSerializer(serializers.ModelSerializer):
             if not start_d:
                 start_d = datetime.date.today()
 
-            jours = []
-            if isinstance(instance.formulaire_data, dict):
-                jours = instance.formulaire_data.get('jours_intervention') or []
-            if not jours:
-                jours = ['lundi', 'jeudi']
+            from .views import extract_jours_intervention_from_demande, sync_subscription_child_demands
+            jours = extract_jours_intervention_from_demande(instance)
 
             planning_obj, _ = SubscriptionPlanning.objects.get_or_create(
                 demande=instance,
@@ -470,7 +467,6 @@ class DemandeSerializer(serializers.ModelSerializer):
                 planning_obj.save()
 
             try:
-                from .views import sync_subscription_child_demands
                 sync_subscription_child_demands(instance, planning_obj)
             except Exception:
                 pass
@@ -627,8 +623,8 @@ class DemandeSerializer(serializers.ModelSerializer):
         if instance.apply_devis_auto_validation():
             instance.save(update_fields=['devis_statut'])
 
-        # If subscription, automatically sync SubscriptionPlanning record
-        if instance.frequency == Demande.ABONNEMENT or instance.parent_demande:
+        # If subscription ROOT demand, automatically sync SubscriptionPlanning record
+        if instance.parent_demande is None and instance.frequency == Demande.ABONNEMENT:
             start_d = instance.date_intervention
             if not start_d and isinstance(instance.formulaire_data, dict):
                 sd_str = instance.formulaire_data.get('date_demarrage') or instance.formulaire_data.get('date_debut')
@@ -640,11 +636,8 @@ class DemandeSerializer(serializers.ModelSerializer):
             if not start_d:
                 start_d = datetime.date.today()
 
-            jours = []
-            if isinstance(instance.formulaire_data, dict):
-                jours = instance.formulaire_data.get('jours_intervention') or []
-            if not jours:
-                jours = ['lundi', 'jeudi']
+            from .views import extract_jours_intervention_from_demande, sync_subscription_child_demands
+            jours = extract_jours_intervention_from_demande(instance)
 
             planning_obj, _ = SubscriptionPlanning.objects.get_or_create(
                 demande=instance,
@@ -665,13 +658,12 @@ class DemandeSerializer(serializers.ModelSerializer):
                 planning_obj.save(update_fields=update_fields)
 
             try:
-                from .views import sync_subscription_child_demands
                 sync_subscription_child_demands(instance, planning_obj)
             except Exception:
                 pass
 
             # If parent demand status changed (e.g. termine / annule / etc.), sync into date_overrides & matching child
-            if instance.parent_demande is None and instance.date_intervention and isinstance(instance.formulaire_data, dict):
+            if instance.date_intervention and isinstance(instance.formulaire_data, dict):
                 start_iso = instance.date_intervention.isoformat()
                 current_st = instance.statut
                 if current_st in ['termine', 'terminee', 'pres_terminee', 'annule', 'annulee', 'reporte', 'reportee']:
@@ -681,6 +673,35 @@ class DemandeSerializer(serializers.ModelSerializer):
                         overrides[start_iso] = {**existing_ov, 'statut': current_st}
                         instance.save(update_fields=['formulaire_data'])
                     Demande.objects.filter(parent_demande=instance, date_intervention=instance.date_intervention).update(statut=current_st)
+
+        # If child demand status changed, sync into parent's date_overrides and planning.semaines
+        elif instance.parent_demande and instance.date_intervention:
+            try:
+                parent = instance.parent_demande
+                child_iso = instance.date_intervention.isoformat()
+                if not isinstance(parent.formulaire_data, dict):
+                    parent.formulaire_data = {}
+                overrides = parent.formulaire_data.setdefault('date_overrides', {})
+                existing_ov = overrides.get(child_iso) or {}
+                if existing_ov.get('statut') != instance.statut:
+                    overrides[child_iso] = {**existing_ov, 'statut': instance.statut}
+                    parent.save(update_fields=['formulaire_data'])
+
+                if hasattr(parent, 'planning') and parent.planning and parent.planning.semaines:
+                    p_semaines = list(parent.planning.semaines)
+                    p_modified = False
+                    for week in p_semaines:
+                        if isinstance(week, dict) and isinstance(week.get('jours'), dict):
+                            for day_k, day_v in week['jours'].items():
+                                if isinstance(day_v, dict) and (day_v.get('demande_id') == instance.id or day_k == child_iso):
+                                    if day_v.get('statut') != instance.statut:
+                                        day_v['statut'] = instance.statut
+                                        p_modified = True
+                    if p_modified:
+                        parent.planning.semaines = p_semaines
+                        parent.planning.save(update_fields=['semaines'])
+            except Exception:
+                pass
 
         # ─── WhatsApp / Document Integration ───
         if regenerer_devis or envoyer_whatsapp:

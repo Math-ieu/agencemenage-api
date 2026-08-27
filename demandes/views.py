@@ -111,6 +111,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
             qs = qs.filter(conditions)
         return qs
 
+    def list(self, request, *args, **kwargs):
+        try:
+            sync_all_active_subscriptions()
+        except Exception as e:
+            pass
+        return super().list(request, *args, **kwargs)
+
     def get_serializer_class(self):
         if self.action == 'list':
             return DemandeListSerializer
@@ -136,12 +143,42 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         demande = serializer.save()
 
-        # AUTOMATION: Sync child demands (delete annulée/reportée on date D1, instantiate only if <= J-1)
-        try:
-            if hasattr(demande, 'planning') and demande.planning:
-                sync_subscription_child_demands(demande, demande.planning)
-        except Exception:
-            pass
+        # AUTOMATION: Sync child demands (ONLY for root parent subscription demands)
+        if demande.parent_demande is None and demande.frequency == Demande.ABONNEMENT:
+            try:
+                if hasattr(demande, 'planning') and demande.planning:
+                    sync_subscription_child_demands(demande, demande.planning)
+            except Exception:
+                pass
+
+        # AUTOMATION: If this is a child demand, sync status change to parent date_overrides & planning.semaines
+        if demande.parent_demande and demande.date_intervention:
+            try:
+                parent = demande.parent_demande
+                child_iso = demande.date_intervention.isoformat()
+                if not isinstance(parent.formulaire_data, dict):
+                    parent.formulaire_data = {}
+                overrides = parent.formulaire_data.setdefault('date_overrides', {})
+                existing_ov = overrides.get(child_iso) or {}
+                if existing_ov.get('statut') != demande.statut:
+                    overrides[child_iso] = {**existing_ov, 'statut': demande.statut}
+                    parent.save(update_fields=['formulaire_data'])
+
+                if hasattr(parent, 'planning') and parent.planning and parent.planning.semaines:
+                    p_semaines = list(parent.planning.semaines)
+                    p_modified = False
+                    for week in p_semaines:
+                        if isinstance(week, dict) and isinstance(week.get('jours'), dict):
+                            for day_k, day_v in week['jours'].items():
+                                if isinstance(day_v, dict) and (day_v.get('demande_id') == demande.id or day_k == child_iso):
+                                    if day_v.get('statut') != demande.statut:
+                                        day_v['statut'] = demande.statut
+                                        p_modified = True
+                    if p_modified:
+                        parent.planning.semaines = p_semaines
+                        parent.planning.save(update_fields=['semaines'])
+            except Exception:
+                pass
 
         # AUTOMATION: Trigger feedback and update payment status if status changed to PRES_TERMINEE
         is_finished = changes.get('statut', {}).get('new') == Demande.PRES_TERMINEE
@@ -1657,135 +1694,241 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
         return Response(serializer.data)
 
 
-def sync_subscription_child_demands(demande, planning):
-    """
-    Implements Section 2.1 & Section 2.2 of subscription_memory.md:
-    1. Instantiates child demands for planned dates <= J-1 (Tomorrow or Today or Past) if not created yet.
-    2. Deletes child demands for dates marked as annulée, retirée/excluded, or reportée (on date D1).
-    """
-    if not demande or not planning:
-        return
-        
-    today = datetime.date.today()
-    tomorrow = today + datetime.timedelta(days=1)
-    
-    date_overrides = demande.formulaire_data.get('date_overrides', {}) if isinstance(demande.formulaire_data, dict) else {}
-    semaines = planning.semaines or []
-    
-    # 1. Collect all active dates from semaines & date_overrides
-    active_dates = {}  # iso_date -> { 'time': '09:00', 'date_val': datetime.date }
-    
-    for week in semaines:
-        if not isinstance(week, dict):
-            continue
-        jours = week.get('jours', {})
-        w_start = week.get('date_debut')
-        if not w_start or not isinstance(jours, dict):
-            continue
-            
-        try:
-            d_start = datetime.date.fromisoformat(w_start)
-        except (ValueError, TypeError):
-            continue
-            
-        days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
-        for offset, day_key in enumerate(days_order):
-            day_info = jours.get(day_key)
-            if not day_info or not isinstance(day_info, dict):
-                continue
-            if day_info.get('selected'):
-                date_val = d_start + datetime.timedelta(days=offset)
-                date_iso = date_val.isoformat()
-                time_val = day_info.get('heure_debut', '09:00')
-                active_dates[date_iso] = {'time': time_val, 'date_val': date_val}
+def get_monday_py(d):
+    return d - datetime.timedelta(days=d.weekday())
 
-    # Include reprogrammed dates from overrides
-    for k, ov in date_overrides.items():
-        if isinstance(ov, dict):
-            reprog_to = ov.get('reprogrammed_to')
-            if reprog_to:
+def calculate_end_time_py(s_str, dur_h):
+    if not s_str:
+        return ''
+    try:
+        parts = s_str.split(':')
+        h, m = int(parts[0]), int(parts[1])
+    except (ValueError, IndexError, TypeError):
+        return ''
+    import math
+    dur_float = float(dur_h) if dur_h else 2.0
+    end_h = h + math.floor(dur_float)
+    end_m = m + round((dur_float % 1) * 60)
+    if end_m >= 60:
+        end_h += end_m // 60
+        end_m = end_m % 60
+    end_h = end_h % 24
+    return f"{end_h:02d}:{end_m:02d}"
+
+def get_frequency_count_py(flabel):
+    if not flabel:
+        return 1
+    import re
+    match = re.match(r'^(\d+)/sem', str(flabel), re.IGNORECASE)
+    if match:
+        return int(match.group(1))
+    if str(flabel).lower().strip() in ['quotidien', '7/sem']:
+        return 7
+    return 1
+
+def get_selected_days_for_frequency_py(jours_interv, fcount, start_dayk):
+    days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    sel = [d for d in (jours_interv or []) if d in days_order]
+    if len(sel) >= fcount:
+        return sel[:fcount]
+    try:
+        start_index = days_order.index(start_dayk)
+    except ValueError:
+        start_index = 0
+    for idx_offset in range(7):
+        idx = (start_index + idx_offset) % 7
+        day = days_order[idx]
+        if day not in sel:
+            sel.append(day)
+        if len(sel) == fcount:
+            break
+    return sel
+
+def extract_jours_intervention_from_demande(demande, planning=None):
+    days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    found = []
+
+    if planning and planning.jours_intervention:
+        if isinstance(planning.jours_intervention, list):
+            for j in planning.jours_intervention:
+                clean = str(j).lower().strip()
+                if clean in days_order and clean not in found:
+                    found.append(clean)
+
+    if isinstance(demande.formulaire_data, dict):
+        fd = demande.formulaire_data
+        
+        raw_ji = fd.get('jours_intervention')
+        if isinstance(raw_ji, list):
+            for j in raw_ji:
+                clean = str(j).lower().strip()
+                if clean in days_order and clean not in found:
+                    found.append(clean)
+        elif isinstance(raw_ji, str):
+            for d in days_order:
+                if d in raw_ji.lower() and d not in found:
+                    found.append(d)
+
+        raw_jp = fd.get('jours_passage')
+        if isinstance(raw_jp, list):
+            for j in raw_jp:
+                clean = str(j).lower().strip()
+                if clean in days_order and clean not in found:
+                    found.append(clean)
+        elif isinstance(raw_jp, str):
+            for d in days_order:
+                if d in raw_jp.lower() and d not in found:
+                    found.append(d)
+
+        raw_jid = fd.get('jours_intervention_detail')
+        if isinstance(raw_jid, list):
+            for item in raw_jid:
+                if isinstance(item, dict):
+                    j = item.get('jour')
+                    if j:
+                        clean = str(j).lower().strip()
+                        if clean in days_order and clean not in found:
+                            found.append(clean)
+
+    if not found:
+        fcount = get_frequency_count_py(demande.frequency_label)
+        start_day_key = 'lundi'
+        if demande.date_intervention:
+            start_day_key = days_order[demande.date_intervention.weekday()]
+        found = get_selected_days_for_frequency_py([], fcount, start_day_key)
+
+    return found
+
+def build_default_semaines_for_planning(demande, planning=None, start_date=None, end_date=None):
+    days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    
+    if not start_date:
+        if planning and planning.date_debut:
+            start_date = planning.date_debut
+        elif demande.date_intervention:
+            start_date = demande.date_intervention
+        elif isinstance(demande.formulaire_data, dict):
+            sd_str = demande.formulaire_data.get('date_demarrage') or demande.formulaire_data.get('date_debut') or demande.formulaire_data.get('date')
+            if sd_str:
                 try:
-                    d_val = datetime.date.fromisoformat(reprog_to)
-                    active_dates[reprog_to] = {'time': ov.get('heure', '09:00'), 'date_val': d_val}
+                    start_date = datetime.date.fromisoformat(str(sd_str)[:10])
                 except (ValueError, TypeError):
                     pass
+        if not start_date:
+            start_date = datetime.date.today()
 
-    # 2. Check existing child demands for this subscription
-    existing_children = Demande.objects.filter(parent_demande=demande)
-    children_by_date = {c.date_intervention.isoformat(): c for c in existing_children if c.date_intervention}
+    if not end_date:
+        if planning and planning.date_fin:
+            end_date = planning.date_fin
+        else:
+            end_date = start_date + datetime.timedelta(days=29)
 
-    # 3. Synchronize Deletions (Section 2.2):
-    # Delete child demand for date D1 if marked as annulée, excluded/retirée, or reportée
-    for date_iso, child in list(children_by_date.items()):
-        ov = date_overrides.get(date_iso, {})
-        statut = (ov.get('statut') or '').lower()
-        is_excluded = ov.get('excluded', False)
-        
-        if is_excluded or statut in ['annule', 'annulee', 'retirer', 'reporte', 'reportee'] or (date_iso not in active_dates and statut != 'termine'):
-            child.delete()
-            children_by_date.pop(date_iso, None)
+    jours_intervention = extract_jours_intervention_from_demande(demande, planning)
+    
+    start_hour = '09:00'
+    if planning and planning.heure_debut:
+        start_hour = planning.heure_debut.strftime('%H:%M')
+    elif demande.heure_intervention:
+        start_hour = demande.heure_intervention[:5]
+    elif isinstance(demande.formulaire_data, dict) and demande.formulaire_data.get('heure'):
+        start_hour = str(demande.formulaire_data.get('heure'))[:5]
 
-    # 4. Synchronize Auto-Creation for Dates <= J-1 (Section 2.1):
-    # If planned date <= Tomorrow (J-1 or Today or Past) and not created yet -> instantiate automatically!
-    planning_modified = False
-    for date_iso, info in active_dates.items():
-        ov = date_overrides.get(date_iso, {})
-        statut = (ov.get('statut') or '').lower()
-        is_excluded = ov.get('excluded', False)
-        
-        if is_excluded or statut in ['annule', 'annulee', 'retirer', 'reporte', 'reportee']:
-            continue
-            
-        date_val = info['date_val']
-        # Rule 2.1: Instantiated if Date <= Tomorrow (J-1)
-        if date_val <= tomorrow:
-            new_child = None
-            if date_iso not in children_by_date:
-                new_child = clone_demand_for_date_time(demande, date_val, info['time'])
-                children_by_date[date_iso] = new_child
-            else:
-                new_child = children_by_date[date_iso]
+    nb_heures = 2.0
+    if isinstance(demande.formulaire_data, dict):
+        raw_h = demande.formulaire_data.get('duree_heures') or demande.formulaire_data.get('nb_heures') or demande.formulaire_data.get('duree')
+        try:
+            nb_heures = float(raw_h)
+        except (ValueError, TypeError):
+            nb_heures = 2.0
 
-            if new_child:
-                # Synchronize demande_id into week JSON
-                for week in semaines:
-                    if isinstance(week, dict) and isinstance(week.get('jours'), dict):
-                        w_start = week.get('date_debut')
-                        if w_start:
-                            try:
-                                d_start = datetime.date.fromisoformat(w_start)
-                                days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
-                                for offset, day_key in enumerate(days_order):
-                                    if d_start + datetime.timedelta(days=offset) == date_val:
-                                        day_info = week['jours'].get(day_key)
-                                        if isinstance(day_info, dict) and day_info.get('demande_id') != new_child.id:
-                                            day_info['demande_id'] = new_child.id
-                                            planning_modified = True
-                            except (ValueError, TypeError):
-                                pass
+    end_hour = calculate_end_time_py(start_hour, nb_heures)
 
-    if planning_modified:
-        planning.semaines = semaines
-        planning.save(update_fields=['semaines'])
+    weeks_list = []
+    current_monday = get_monday_py(start_date)
+    w_index = 1
 
+    import random
+    import string
+
+    while current_monday <= end_date:
+        week_debut_str = current_monday.isoformat()
+        sunday = current_monday + datetime.timedelta(days=6)
+        week_fin_str = sunday.isoformat()
+
+        jours_dict = {}
+        for offset, day_key in enumerate(days_order):
+            day_date = current_monday + datetime.timedelta(days=offset)
+            day_date_str = day_date.isoformat()
+
+            is_selected = (day_key in jours_intervention and start_date <= day_date <= end_date)
+
+            jours_dict[day_key] = {
+                'selected': is_selected,
+                'heure_debut': start_hour if is_selected else '',
+                'heure_fin': end_hour if is_selected else '',
+                'demande_id': None
+            }
+
+        w_id = ''.join(random.choices(string.ascii_lowercase + string.digits, k=9))
+        weeks_list.append({
+            'id': w_id,
+            'label': f"Semaine {w_index}",
+            'date_debut': week_debut_str,
+            'date_fin': week_fin_str,
+            'termine': False,
+            'mois': 1,
+            'jours': jours_dict
+        })
+        w_index += 1
+        current_monday += datetime.timedelta(days=7)
+
+    return weeks_list
 
 def clone_demand_for_date_time(parent_demande, date_val, time_val):
+    if not parent_demande or parent_demande.parent_demande is not None:
+        return None
+
     existing = Demande.objects.filter(parent_demande=parent_demande, date_intervention=date_val).first()
     if existing:
         return existing
     
-    total_price = float(parent_demande.prix) if parent_demande.prix else 0
-    session_price = total_price
+    total_price = float(parent_demande.prix) if parent_demande.prix else 0.0
+    
+    # Calculate session price per passage (Section 4.2 / 4.5 of subscription_memory.md)
+    unit_price = 0.0
+    if isinstance(parent_demande.formulaire_data, dict):
+        if parent_demande.formulaire_data.get('prix_unitaire'):
+            try:
+                unit_price = float(parent_demande.formulaire_data['prix_unitaire'])
+            except (ValueError, TypeError):
+                unit_price = 0.0
+        elif parent_demande.formulaire_data.get('nombre_passages'):
+            try:
+                nb_p = float(parent_demande.formulaire_data['nombre_passages'])
+                if nb_p > 0:
+                    unit_price = round(total_price / nb_p, 2)
+            except (ValueError, TypeError):
+                unit_price = 0.0
+
+    if unit_price <= 0 and parent_demande.planning:
+        nb_p = getattr(parent_demande.planning, 'nombre_passages_mois', 0)
+        if nb_p and nb_p > 0:
+            unit_price = round(total_price / nb_p, 2)
+
+    if unit_price <= 0:
+        freq_label = parent_demande.frequency_label or ''
+        import re
+        match = re.match(r'^(\d+)/sem', freq_label, re.IGNORECASE)
+        passages_count = int(match.group(1)) * 4 if match else 4
+        unit_price = round(total_price / passages_count, 2) if passages_count > 0 else total_price
+
+    session_price = unit_price
     
     tva_active = parent_demande.formulaire_data.get('facturation', {}).get('tva_active', False) if isinstance(parent_demande.formulaire_data, dict) else False
-    parent_facturation = parent_demande.formulaire_data.get('facturation', {}) if isinstance(parent_demande.formulaire_data, dict) else {}
-    session_price_ht = float(parent_facturation.get('montant_ht', session_price))
-    if tva_active and session_price_ht == session_price:
-        session_price_ht = round(session_price / 1.2, 2)
+    session_price_ht = round(session_price / 1.2, 2) if tva_active else session_price
     
     new_formulaire_data = dict(parent_demande.formulaire_data) if isinstance(parent_demande.formulaire_data, dict) else {}
     
-    # Calculate subscription month
     subscription_month = 1
     try:
         if parent_demande.planning:
@@ -1810,7 +1953,11 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
     new_formulaire_data['frequence'] = parent_demande.frequency_label or 'Abonnement'
     new_formulaire_data['frequency'] = 'abonnement'
     new_formulaire_data['date'] = date_val.isoformat()
-    new_formulaire_data['heure'] = time_val or ''
+    new_formulaire_data['date_intervention'] = date_val.isoformat()
+    new_formulaire_data['date_demarrage'] = date_val.isoformat()
+    new_formulaire_data['date_debut'] = date_val.isoformat()
+    new_formulaire_data['schedulingDate'] = date_val.isoformat()
+    new_formulaire_data['heure'] = time_val or parent_demande.heure_intervention or '09:00'
     new_formulaire_data['montant'] = session_price
     new_formulaire_data['total'] = session_price
     new_formulaire_data['facturation'] = {
@@ -1825,72 +1972,182 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         'parts_repartition': [],
     }
     
+    initial_statut = Demande.ENCOURS
+    initial_statut_paiement = Demande.NON_PAYE
+    if isinstance(parent_demande.formulaire_data, dict):
+        date_overrides = parent_demande.formulaire_data.get('date_overrides', {})
+        if isinstance(date_overrides, dict):
+            ov = date_overrides.get(date_val.isoformat(), {})
+            if isinstance(ov, dict):
+                ov_st = ov.get('statut')
+                if ov_st in [Demande.PRES_TERMINEE, 'pres_terminee', Demande.TERMINE, 'termine']:
+                    initial_statut = ov_st
+                    initial_statut_paiement = Demande.EN_ATTENTE
+
     return Demande.objects.create(
         client=parent_demande.client,
         service=parent_demande.service,
         segment=parent_demande.segment,
         source=parent_demande.source or Demande.BACKOFFICE,
-        statut=Demande.ENCOURS,
+        statut=initial_statut,
         frequency=Demande.ABONNEMENT,
         frequency_label=parent_demande.frequency_label or "Abonnement",
         date_intervention=date_val,
-        heure_intervention=time_val or '',
+        heure_intervention=time_val or parent_demande.heure_intervention or '09:00',
         prix=Decimal(str(session_price)),
         part_agence=Decimal('0'),
         mode_paiement=parent_demande.mode_paiement,
-        statut_paiement=Demande.NON_PAYE,
+        statut_paiement=initial_statut_paiement,
         note_commercial=parent_demande.note_commercial,
         note_operationnel=parent_demande.note_operationnel,
         preference_horaire=parent_demande.preference_horaire,
         formulaire_data=new_formulaire_data,
         assigned_to=parent_demande.assigned_to,
+        assigned_to_operations=parent_demande.assigned_to_operations,
         created_by=parent_demande.created_by,
         parent_demande=parent_demande,
     )
 
+def sync_subscription_child_demands(demande, planning):
+    """
+    Implements Section 2.1 & Section 2.2 of subscription_memory.md:
+    1. Ensures planning.semaines exists and contains valid weeks structure.
+    2. Instantiates child demands for planned dates <= J-1 (Tomorrow or Today or Past) if not created yet.
+    3. Deletes child demands for dates marked as annulée, retirée/excluded, or reportée (on date D1).
+    """
+    if not demande or not planning or demande.parent_demande is not None:
+        return
+        
+    today = datetime.date.today()
+    tomorrow = today + datetime.timedelta(days=1)
+    
+    date_overrides = demande.formulaire_data.get('date_overrides', {}) if isinstance(demande.formulaire_data, dict) else {}
+    semaines = planning.semaines or []
+    
+    planning_modified = False
+    if not isinstance(semaines, list) or len(semaines) == 0:
+        semaines = build_default_semaines_for_planning(demande, planning)
+        planning.semaines = semaines
+        planning_modified = True
 
-def handle_auto_cloning_of_planning_interventions(demande, planning_obj):
-    if planning_obj.semaines and isinstance(planning_obj.semaines, list):
-        days_map = {
-            0: 'lundi',
-            1: 'mardi',
-            2: 'mercredi',
-            3: 'jeudi',
-            4: 'vendredi',
-            5: 'samedi',
-            6: 'dimanche'
-        }
-        today = datetime.date.today()
-        tomorrow = today + datetime.timedelta(days=1)
+    if not planning.jours_intervention:
+        detected_jours = extract_jours_intervention_from_demande(demande, planning)
+        if detected_jours:
+            planning.jours_intervention = detected_jours
+            planning_modified = True
 
-        for week in planning_obj.semaines:
-            if not isinstance(week, dict):
-                continue
-            w_debut = week.get('date_debut')
-            w_fin = week.get('date_fin')
-            if not w_debut or not w_fin:
-                continue
-            try:
-                d_debut = datetime.date.fromisoformat(w_debut)
-                d_fin = datetime.date.fromisoformat(w_fin)
-            except (ValueError, TypeError):
-                continue
+    active_dates = {}
+    days_order = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
+    
+    for week in semaines:
+        if not isinstance(week, dict):
+            continue
+        jours = week.get('jours', {})
+        w_start = week.get('date_debut')
+        if not w_start or not isinstance(jours, dict):
+            continue
             
-            current_date = d_debut
-            while current_date <= d_fin:
-                if current_date == d_fin and d_fin > d_debut:
-                    break
-                day_name = days_map[current_date.weekday()]
-                jours_dict = week.get('jours', {})
-                day_info = jours_dict.get(day_name, {})
-                if day_info and day_info.get('selected'):
-                    # Rule 2.1: Only instantiate child intervention if Date <= Tomorrow (J-1 or today/past)
-                    if current_date <= tomorrow:
-                        time_val = day_info.get('heure_debut', '')
-                        if time_val and len(time_val) > 5:
-                            time_val = time_val[:5]
-                        clone_demand_for_date_time(demande, current_date, time_val)
-                current_date += datetime.timedelta(days=1)
+        try:
+            d_start = datetime.date.fromisoformat(w_start)
+        except (ValueError, TypeError):
+            continue
+            
+        for offset, day_key in enumerate(days_order):
+            day_info = jours.get(day_key)
+            if not day_info or not isinstance(day_info, dict):
+                continue
+            if day_info.get('selected'):
+                date_val = d_start + datetime.timedelta(days=offset)
+                date_iso = date_val.isoformat()
+                time_val = day_info.get('heure_debut', '09:00')
+                active_dates[date_iso] = {'time': time_val, 'date_val': date_val}
+
+    for k, ov in date_overrides.items():
+        if isinstance(ov, dict):
+            reprog_to = ov.get('reprogrammed_to')
+            if reprog_to:
+                try:
+                    d_val = datetime.date.fromisoformat(reprog_to)
+                    active_dates[reprog_to] = {'time': ov.get('heure', '09:00'), 'date_val': d_val}
+                except (ValueError, TypeError):
+                    pass
+
+    existing_children = Demande.objects.filter(parent_demande=demande)
+    children_by_date = {c.date_intervention.isoformat(): c for c in existing_children if c.date_intervention}
+
+    for date_iso, child in list(children_by_date.items()):
+        ov = date_overrides.get(date_iso, {})
+        statut = (ov.get('statut') or '').lower()
+        is_excluded = ov.get('excluded', False)
+        
+        if is_excluded or statut in ['annule', 'annulee', 'retirer', 'reporte', 'reportee'] or (date_iso not in active_dates and statut != 'termine'):
+            child.delete()
+            children_by_date.pop(date_iso, None)
+
+    for date_iso, info in active_dates.items():
+        ov = date_overrides.get(date_iso, {})
+        statut = (ov.get('statut') or '').lower()
+        is_excluded = ov.get('excluded', False)
+        
+        if is_excluded or statut in ['annule', 'annulee', 'retirer', 'reporte', 'reportee']:
+            continue
+            
+        date_val = info['date_val']
+        if date_val <= tomorrow:
+            new_child = None
+            if date_iso not in children_by_date:
+                new_child = clone_demand_for_date_time(demande, date_val, info['time'])
+                children_by_date[date_iso] = new_child
+            else:
+                new_child = children_by_date[date_iso]
+
+            if new_child:
+                for week in semaines:
+                    if isinstance(week, dict) and isinstance(week.get('jours'), dict):
+                        w_start = week.get('date_debut')
+                        if w_start:
+                            try:
+                                d_start = datetime.date.fromisoformat(w_start)
+                                for offset, day_key in enumerate(days_order):
+                                    if d_start + datetime.timedelta(days=offset) == date_val:
+                                        day_info = week['jours'].get(day_key)
+                                        if isinstance(day_info, dict) and day_info.get('demande_id') != new_child.id:
+                                            day_info['demande_id'] = new_child.id
+                                            planning_modified = True
+                            except (ValueError, TypeError):
+                                pass
+
+    if planning_modified:
+        planning.semaines = semaines
+        planning.save()
+
+def sync_all_active_subscriptions():
+    """
+    Synchronizes all active subscriptions so that child demands due for
+    today or tomorrow (J-1) or past are instantiated and visible on the dashboard.
+    """
+    active_abos = Demande.objects.filter(
+        frequency=Demande.ABONNEMENT,
+        parent_demande__isnull=True
+    ).exclude(statut__in=[Demande.ANNULE, Demande.TERMINE])
+    
+    for abo in active_abos:
+        try:
+            planning = getattr(abo, 'planning', None)
+            if not planning:
+                start_d = abo.date_intervention or datetime.date.today()
+                jours = abo.formulaire_data.get('jours_intervention') if isinstance(abo.formulaire_data, dict) else []
+                if not jours:
+                    jours = ['lundi', 'jeudi']
+                planning = SubscriptionPlanning.objects.create(
+                    demande=abo,
+                    date_debut=start_d,
+                    jours_intervention=jours,
+                    statut='en_cours'
+                )
+            sync_subscription_child_demands(abo, planning)
+        except Exception:
+            pass
 
 
 class FeteReligieusePermission(IsAuthenticated):
