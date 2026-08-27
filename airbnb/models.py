@@ -92,6 +92,10 @@ class Bien(models.Model):
     set_composition = models.JSONField(default=dict, blank=True, verbose_name="Composition standard du linge")
     sets_rechange_client = models.PositiveIntegerField(default=3, verbose_name="Stock de roulement de jeux de rechange")
     
+    # Photos & Visuels du Logement
+    photo_principale = models.URLField(max_length=500, blank=True, null=True, verbose_name="Photo principale du logement")
+    photo_acces = models.URLField(max_length=500, blank=True, null=True, verbose_name="Photo boîte à clés / digicode / accès")
+    
     # Intégration iCal / Channel Manager
     ical_url = models.URLField(blank=True, null=True, max_length=500, verbose_name="URL du flux iCal (Smoobu, Hostaway, Airbnb)")
     ical_derniere_lecture = models.DateTimeField(blank=True, null=True, verbose_name="Dernière synchro iCal")

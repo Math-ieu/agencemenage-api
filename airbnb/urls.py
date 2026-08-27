@@ -5,7 +5,8 @@ from .views import (
     BienViewSet,
     CommandeAirbnbViewSet,
     FiletLingeViewSet,
-    ObjetTrouveViewSet
+    ObjetTrouveViewSet,
+    AirbnbPhotoUploadView
 )
 
 router = DefaultRouter()
@@ -16,5 +17,6 @@ router.register(r'filets', FiletLingeViewSet, basename='airbnb-filets')
 router.register(r'objets-trouves', ObjetTrouveViewSet, basename='airbnb-objets-trouves')
 
 urlpatterns = [
+    path('upload-photo/', AirbnbPhotoUploadView.as_view(), name='airbnb-upload-photo'),
     path('', include(router.urls)),
 ]

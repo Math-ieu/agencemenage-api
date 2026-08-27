@@ -1,8 +1,15 @@
+import os
+import uuid
+import mimetypes
 from decimal import Decimal
 from datetime import datetime, date, timedelta
 from django.utils import timezone
 from django.db.models import Count, Sum, Q
+from django.core.files.storage import default_storage
+from django.conf import settings
 from rest_framework import viewsets, status, permissions
+from rest_framework.views import APIView
+from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
 from rest_framework.decorators import action
 from rest_framework.response import Response
 
@@ -404,3 +411,80 @@ class ObjetTrouveViewSet(viewsets.ModelViewSet):
             'success': True,
             'message': f"Objet marqué comme restitué à {remis_a}."
         })
+
+
+class AirbnbPhotoUploadView(APIView):
+    """
+    Endpoint pour le téléversement physique de photos du module Airbnb
+    (photos de clôture 4/4, objets trouvés, photos de logements, accès/boîtes à clés, linge).
+    
+    Stocke physiquement le fichier dans le bucket Railway (ProxyS3Boto3Storage)
+    ou en local selon la configuration de default_storage.
+    
+    URL: POST /api/airbnb/upload-photo/
+    Body: multipart/form-data avec 'photo' (ou 'file') et optionnellement 'category'.
+    """
+    permission_classes = [permissions.IsAuthenticated]
+    parser_classes = [MultiPartParser, FormParser, JSONParser]
+
+    ALLOWED_EXTENSIONS = {'.jpg', '.jpeg', '.png', '.webp', '.heic', '.pdf'}
+    MAX_FILE_SIZE = 15 * 1024 * 1024  # 15 MB
+
+    def post(self, request, *args, **kwargs):
+        file_obj = request.FILES.get('photo') or request.FILES.get('file')
+        if not file_obj:
+            return Response(
+                {'error': "Aucun fichier photo fourni dans la requête (clé attendue : 'photo' ou 'file')."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validation de la taille
+        if file_obj.size > self.MAX_FILE_SIZE:
+            return Response(
+                {'error': f"Le fichier est trop volumineux ({round(file_obj.size / (1024 * 1024), 2)} Mo). Limite maximale : 15 Mo."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        # Validation de l'extension
+        _, ext = os.path.splitext(file_obj.name)
+        ext = ext.lower()
+        if ext not in self.ALLOWED_EXTENSIONS:
+            return Response(
+                {'error': f"Extension non supportée ({ext}). Formats autorisés : JPG, JPEG, PNG, WEBP, HEIC, PDF."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+
+        category = request.data.get('category', 'general')
+        # Nettoyage de la catégorie pour éviter tout path traversal
+        safe_category = "".join(c for c in category if c.isalnum() or c in ('_', '-')) or 'general'
+        
+        # Génération d'un nom de fichier unique et sécurisé
+        unique_id = uuid.uuid4().hex[:12]
+        raw_name = os.path.basename(file_obj.name).replace(' ', '_')
+        clean_filename = f"{unique_id}_{raw_name}"
+        storage_path = f"airbnb/{safe_category}/{clean_filename}"
+
+        try:
+            saved_name = default_storage.save(storage_path, file_obj)
+            # URL accessible via le proxy /api/media/
+            clean_saved_name = saved_name.lstrip('/')
+            media_prefix = getattr(settings, 'MEDIA_URL', '/api/media/').rstrip('/')
+            media_url = f"{media_prefix}/{clean_saved_name}"
+            
+            content_type = file_obj.content_type or mimetypes.guess_type(saved_name)[0] or 'image/jpeg'
+
+            return Response({
+                'success': True,
+                'url': media_url,
+                'filename': clean_filename,
+                'path': saved_name,
+                'size': file_obj.size,
+                'content_type': content_type,
+                'category': safe_category
+            }, status=status.HTTP_201_CREATED)
+        except Exception as err:
+            return Response(
+                {'error': f"Erreur lors de l'enregistrement dans le bucket de stockage : {str(err)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+

@@ -26,6 +26,7 @@ class BienListSerializer(serializers.ModelSerializer):
             'id', 'code', 'nom_bien', 'client', 'client_name', 'client_phone',
             'ville', 'quartier', 'adresse', 'typologie', 'zone_eloignee',
             'chambres', 'salles_de_bain', 'acces_type', 'sets_rechange_client',
+            'photo_principale', 'photo_acces',
             'commandes_actives_count', 'stock_filets_count', 'is_active', 'created_at'
         ]
 
