@@ -20,6 +20,7 @@ class Demande(models.Model):
     TERMINE = 'termine'
     PRES_EN_COURS = 'pres_en_cours'
     PRES_TERMINEE = 'pres_terminee'
+    RESILIE = 'resilie'
     STATUT_CHOICES = [
         (EN_ATTENTE, 'En attente'),
         (ENCOURS, 'En cours'),
@@ -27,6 +28,7 @@ class Demande(models.Model):
         (TERMINE, 'Terminé'),
         (PRES_EN_COURS, 'Pres. en cours'),
         (PRES_TERMINEE, 'Pres. terminée'),
+        (RESILIE, 'Résilié'),
     ]
 
     # Statuts du devis (workflow brief — indépendant de Demande.statut)

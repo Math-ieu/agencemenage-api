@@ -211,12 +211,14 @@ class DemandeSerializer(serializers.ModelSerializer):
         facturation = form_data.get('facturation', {}) if isinstance(form_data, dict) else {}
         statut_paiement_ui = facturation.get('statut_paiement_ui')
 
+        frequency = attrs.get('frequency') or (self.instance.frequency if self.instance else None)
         is_paying = (statut_paiement == Demande.INTEGRAL) or (statut_paiement_ui == 'paye')
 
-        if is_paying and statut not in [Demande.PRES_TERMINEE, Demande.TERMINE]:
-            raise serializers.ValidationError(
-                "Le statut 'Payé' ne doit être accessible que si le besoin est préalablement passé au statut 'Prestation terminée'."
-            )
+        if frequency != Demande.ABONNEMENT and statut not in [Demande.RESILIE, Demande.ANNULE, 'resilie', 'annule']:
+            if is_paying and statut not in [Demande.PRES_TERMINEE, Demande.TERMINE]:
+                raise serializers.ValidationError(
+                    "Le statut 'Payé' ne doit être accessible que si le besoin est préalablement passé au statut 'Prestation terminée'."
+                )
 
         return attrs
 
