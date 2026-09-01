@@ -140,6 +140,9 @@ class RoleBasedPermission(permissions.BasePermission):
                 
             if action == 'envoyer_profil':
                 return has_perm('postuler_demande')
+
+            if action == 'retirer_profil':
+                return has_perm('retirer_profil_demande')
                 
             if action == 'valider':
                 # Allowed at view level, will check ownership/assignment in has_object_permission
@@ -314,6 +317,11 @@ class RoleBasedPermission(permissions.BasePermission):
 
             if action == 'envoyer_profil':
                 if 'postuler_demande' not in permissions_list:
+                    return False
+                return True if is_exempt else is_concerned
+
+            if action == 'retirer_profil':
+                if 'retirer_profil_demande' not in permissions_list:
                     return False
                 return True if is_exempt else is_concerned
 
