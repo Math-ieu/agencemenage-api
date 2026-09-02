@@ -65,6 +65,7 @@ urlpatterns = [
 
     # Public endpoint (no auth required — from website)
     path('api/public/demandes/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demande_create'),
+    path('api/public/demand/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demand_create'),
     path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
     path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
     path('api/public/promos/validate/', PublicPromoCodeValidateView.as_view(), name='public_promos_validate'),

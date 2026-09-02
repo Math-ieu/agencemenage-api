@@ -10,7 +10,7 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-changeme')
 DEBUG = config('DEBUG', default=True, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1').split(',')
+ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,testserver,.railway.app,api.agencemenage.ma').split(',')
 
 # Application definition
 INSTALLED_APPS = [
@@ -178,7 +178,7 @@ AUTH_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
 CORS_ALLOWED_ORIGINS = [
     origin.rstrip('/') for origin in config(
         'CORS_ALLOWED_ORIGINS',
-        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
+        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://agencemenage.ma,https://www.agencemenage.ma,https://app.agencemenage.ma,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
     ).split(',') if origin
 ]
 
@@ -187,7 +187,7 @@ CORS_ALLOW_CREDENTIALS = True
 CSRF_TRUSTED_ORIGINS = [
     origin.rstrip('/') for origin in config(
         'CSRF_TRUSTED_ORIGINS',
-        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
+        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://agencemenage.ma,https://www.agencemenage.ma,https://app.agencemenage.ma,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
     ).split(',') if origin
 ]
 
