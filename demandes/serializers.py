@@ -1057,6 +1057,69 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
             'promo_code',
         ]
 
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        
+        # 1. Normalize frequency ('subscription' -> 'abonnement')
+        freq = data.get('frequency')
+        if freq:
+            freq_str = str(freq).strip().lower()
+            if freq_str in ['subscription', 'mensuel', 'hebdomadaire', 'abonnement']:
+                data['frequency'] = Demande.ABONNEMENT
+            elif freq_str in ['oneshot', 'one-shot', 'une fois', 'once']:
+                data['frequency'] = Demande.ONCE
+                
+        # 2. Normalize segment
+        seg = data.get('segment')
+        if not seg or str(seg).strip() == '':
+            service = data.get('service', '')
+            data['segment'] = get_segment_from_service(service)
+        elif str(seg).strip().lower() in ['entreprise', 'professionnel', 'pro']:
+            data['segment'] = Demande.ENTREPRISE
+        else:
+            data['segment'] = Demande.PARTICULIER
+
+        # 3. Clean and sanitize prix
+        prix_val = data.get('prix')
+        if prix_val is not None:
+            if isinstance(prix_val, (int, float)):
+                data['prix'] = prix_val
+            elif isinstance(prix_val, str):
+                prix_str = prix_val.strip()
+                if not prix_str or 'devis' in prix_str.lower() or 'rappel' in prix_str.lower() or 'gratuit' in prix_str.lower():
+                    data['prix'] = None
+                    data['is_devis'] = True
+                else:
+                    cleaned_num = prix_str.upper().replace('MAD', '').replace('DH', '').replace(' ', '').replace(',', '.').strip()
+                    try:
+                        data['prix'] = float(cleaned_num)
+                    except (ValueError, TypeError):
+                        data['prix'] = None
+                        data['is_devis'] = True
+
+        # 4. Clean date_intervention
+        date_val = data.get('date_intervention')
+        if date_val is not None:
+            if isinstance(date_val, str) and not date_val.strip():
+                data['date_intervention'] = None
+
+        # 5. Fallback for client_nom / prenom if passed in formulaire_data
+        if not data.get('client_nom'):
+            fd = data.get('formulaire_data', {})
+            if isinstance(fd, dict):
+                nom = fd.get('nom') or fd.get('lastName') or fd.get('contactPerson') or fd.get('entityName') or fd.get('fullName') or ''
+                if nom:
+                    data['client_nom'] = nom
+
+        if not data.get('client_prenom'):
+            fd = data.get('formulaire_data', {})
+            if isinstance(fd, dict):
+                prenom = fd.get('prenom') or fd.get('firstName') or ''
+                if prenom:
+                    data['client_prenom'] = prenom
+
+        return super().to_internal_value(data)
+
     def create(self, validated_data):
         from clients.models import Client
 
