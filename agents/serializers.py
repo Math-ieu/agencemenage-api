@@ -66,7 +66,27 @@ class AgentSerializer(serializers.ModelSerializer):
             if isinstance(field, (models.DateField, models.IntegerField, models.PositiveIntegerField, models.FileField, models.ImageField)):
                 if val in ('', 'null', 'undefined'):
                     mutable_data[field.name] = None
-                    
+            elif isinstance(field, models.BooleanField):
+                if val in ('', 'null', 'undefined'):
+                    mutable_data[field.name] = False
+                elif isinstance(val, str):
+                    mutable_data[field.name] = val.lower() in ('true', '1', 'yes')
+
+        # 3. Handle categorie safely to prevent choices validation 400 Bad Request
+        if 'categorie' in mutable_data:
+            cat = mutable_data.get('categorie')
+            if cat in ('', 'null', 'undefined', None):
+                mutable_data['categorie'] = 'externe'
+            elif isinstance(cat, str):
+                cat_clean = cat.strip().lower()
+                mutable_data['categorie'] = cat_clean if cat_clean in ('interne', 'externe') else 'externe'
+
+        # 4. Handle type_profil safely
+        if 'type_profil' in mutable_data:
+            tp = mutable_data.get('type_profil')
+            if tp in ('null', 'undefined', None):
+                mutable_data['type_profil'] = ''
+
         return super().to_internal_value(mutable_data)
     def _get_experiences_data(self, request):
         import json
@@ -117,6 +137,7 @@ class AgentListSerializer(serializers.ModelSerializer):
             'id', 'uuid', 'first_name', 'last_name', 'full_name', 'phone', 'whatsapp',
             'poste', 'statut', 'disponibilite_intervention', 'city', 'neighborhood', 'experience', 
             'languages', 'nationality', 'cin', 'situation', 'photo', 'created_at', 'average_rating', 'is_blacklisted',
+            'type_profil', 'categorie',
             'assigned_to', 'assigned_to_name'
         ]
 

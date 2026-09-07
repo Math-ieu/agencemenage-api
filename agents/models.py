@@ -46,6 +46,17 @@ class Agent(models.Model):
     cin = models.CharField(max_length=50, blank=True, verbose_name="CIN")
     situation = models.CharField(max_length=50, blank=True, verbose_name="Situation familiale")
     type_profil = models.CharField(max_length=100, blank=True, verbose_name="Type de profil")
+    CATEGORIE_CHOICES = [
+        ('interne', 'Interne'),
+        ('externe', 'Externe'),
+    ]
+    categorie = models.CharField(
+        max_length=20,
+        choices=CATEGORIE_CHOICES,
+        default='externe',
+        blank=True,
+        verbose_name="Catégorie"
+    )
 
     # Characteristics
     training_details = models.TextField(blank=True, verbose_name="Formation requise")

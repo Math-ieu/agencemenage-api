@@ -14,7 +14,7 @@ class AgentFilter(django_filters.FilterSet):
 
     class Meta:
         model = Agent
-        fields = ['statut', 'disponibilite_intervention', 'poste', 'city', 'type_profil']
+        fields = ['statut', 'disponibilite_intervention', 'poste', 'city', 'type_profil', 'categorie']
 
     def filter_disponibilite_type(self, queryset, name, value):
         if value == 'urgences':
