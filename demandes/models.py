@@ -18,7 +18,9 @@ class Demande(models.Model):
     ENCOURS = 'en_cours'
     ANNULE = 'annule'
     TERMINE = 'termine'
+    PRES_CONFIRMEE = 'pres_confirmee'
     PRES_EN_COURS = 'pres_en_cours'
+    PRES_A_CONFIRMER = 'pres_a_confirmer'
     PRES_TERMINEE = 'pres_terminee'
     RESILIE = 'resilie'
     STATUT_CHOICES = [
@@ -26,7 +28,9 @@ class Demande(models.Model):
         (ENCOURS, 'En cours'),
         (ANNULE, 'Annulé'),
         (TERMINE, 'Terminé'),
+        (PRES_CONFIRMEE, 'Prestation confirmée'),
         (PRES_EN_COURS, 'Pres. en cours'),
+        (PRES_A_CONFIRMER, 'Pres. à confirmer'),
         (PRES_TERMINEE, 'Pres. terminée'),
         (RESILIE, 'Résilié'),
     ]
@@ -522,11 +526,13 @@ def log_demande_changes(sender, instance, **kwargs):
     elif instance.statut != old_instance.statut:
         status_label_map = {
             'en_attente': 'Nouveau besoin',
-            'en_cours': 'En cours',
-            'annule': 'Annulé',
-            'termine': 'Terminé',
+            'en_cours': 'Client à appeler',
+            'pres_confirmee': 'Prestation confirmée',
             'pres_en_cours': 'Prestation en cours',
+            'pres_a_confirmer': 'Prestation terminée (À confirmer)',
             'pres_terminee': 'Prestation terminée',
+            'termine': 'Terminé',
+            'annule': 'Annulé',
         }
         old_lbl = status_label_map.get(old_instance.statut, old_instance.statut)
         new_lbl = status_label_map.get(instance.statut, instance.statut)
@@ -537,6 +543,23 @@ def log_demande_changes(sender, instance, **kwargs):
             details=f"Statut demande : {old_lbl} → {new_lbl}",
             user=current_user
         )
+
+        from django.utils import timezone
+        if not isinstance(instance.formulaire_data, dict):
+            instance.formulaire_data = {}
+        history = instance.formulaire_data.setdefault('workflow_history', [])
+        user_display = (
+            getattr(current_user, 'full_name', '') or 
+            getattr(current_user, 'username', '') or 
+            'Système'
+        ) if current_user else 'Système'
+        history.append({
+            'from_statut': old_instance.statut,
+            'to_statut': instance.statut,
+            'label': new_lbl,
+            'user': user_display,
+            'timestamp': timezone.localtime(timezone.now()).isoformat(),
+        })
 
 @receiver(post_save, sender=Demande)
 def log_demande_creation(sender, instance, created, **kwargs):

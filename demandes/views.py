@@ -387,6 +387,27 @@ class DemandeViewSet(viewsets.ModelViewSet):
         self._log_action(request.user, 'valider', demande)
         return Response(DemandeSerializer(demande).data)
 
+    @action(detail=False, methods=['post'], url_path='sync-workflow')
+    def sync_workflow(self, request):
+        """Synchronise l'état des prestations en fonction des horaires et envoie les alertes."""
+        from demandes.utils.workflow_engine import sync_prestation_workflow
+        stats = sync_prestation_workflow()
+        return Response({'success': True, 'stats': stats})
+
+    @action(detail=True, methods=['post'], url_path='confirmer-fin')
+    def confirmer_fin(self, request, pk=None):
+        """Confirme qu'une prestation est terminée → statut PRES_TERMINEE"""
+        demande = self.get_object()
+        demande.statut = Demande.PRES_TERMINEE
+        demande.statut_paiement = Demande.EN_ATTENTE
+        demande.save()
+        
+        self._trigger_automatic_feedback(demande)
+        self._log_action(request.user, 'confirmer_fin_prestation', demande, extra_data={
+            'confirmed_by': getattr(request.user, 'full_name', '') or getattr(request.user, 'username', '') or 'Système'
+        })
+        return Response(DemandeSerializer(demande).data)
+
     @action(detail=True, methods=['post'])
     def annuler(self, request, pk=None):
         """Annuler une demande."""

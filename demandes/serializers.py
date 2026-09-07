@@ -833,6 +833,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     client_address = serializers.CharField(source='client.address', read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True, default=None)
     commercial_name = serializers.SerializerMethodField()
+    statut_besoin_label = serializers.SerializerMethodField()
     assigned_to_operations_name = serializers.CharField(source='assigned_to_operations.full_name', read_only=True)
     mode_paiement_label = serializers.CharField(source='get_mode_paiement_display', read_only=True)
     statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
@@ -861,7 +862,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     class Meta:
         model = Demande
         fields = [
-            'id', 'client', 'service', 'segment', 'source', 'statut', 'frequency',
+            'id', 'client', 'service', 'segment', 'source', 'statut', 'statut_besoin_label', 'frequency',
             'frequency_label', 'date_intervention', 'heure_intervention',
             'prix', 'montant_devis', 'montant_facture', 'is_devis', 'devis_statut', 'mode_paiement', 'statut_paiement',
             'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
@@ -962,6 +963,27 @@ class DemandeListSerializer(serializers.ModelSerializer):
             return obj.client.assigned_commercial.full_name
         return None
 
+    def get_statut_besoin_label(self, obj):
+        if obj.statut == Demande.EN_ATTENTE:
+            return 'Nouveau besoin'
+        if obj.statut == Demande.ENCOURS:
+            if obj.cao in ['oui', True, 'true', 'confirmed']:
+                return 'Prestation confirmée'
+            return 'Client à appeler'
+        if obj.statut == Demande.PRES_CONFIRMEE:
+            return 'Prestation confirmée'
+        if obj.statut == Demande.PRES_EN_COURS:
+            return 'Prestation en cours'
+        if obj.statut == Demande.PRES_A_CONFIRMER:
+            return 'Prestation terminée (À confirmer)'
+        if obj.statut == Demande.PRES_TERMINEE:
+            return 'Prestation terminée'
+        if obj.statut == Demande.TERMINE:
+            return 'Paye'
+        if obj.statut == Demande.ANNULE:
+            return 'Annule'
+        return obj.get_statut_display()
+
 
 class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source='client.display_name', read_only=True)
@@ -1037,7 +1059,17 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
         if obj.statut == Demande.EN_ATTENTE:
             return 'Nouveau besoin'
         if obj.statut == Demande.ENCOURS:
-            return 'Confirmé' if obj.cao else 'En attente'
+            if obj.cao in ['oui', True, 'true', 'confirmed']:
+                return 'Prestation confirmée'
+            return 'Client à appeler'
+        if obj.statut == Demande.PRES_CONFIRMEE:
+            return 'Prestation confirmée'
+        if obj.statut == Demande.PRES_EN_COURS:
+            return 'Prestation en cours'
+        if obj.statut == Demande.PRES_A_CONFIRMER:
+            return 'Prestation terminée (À confirmer)'
+        if obj.statut == Demande.PRES_TERMINEE:
+            return 'Prestation terminée'
         if obj.statut == Demande.TERMINE:
             return 'Paye'
         if obj.statut == Demande.ANNULE:
