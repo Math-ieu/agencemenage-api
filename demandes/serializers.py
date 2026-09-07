@@ -773,6 +773,51 @@ class DemandeSerializer(serializers.ModelSerializer):
                             variables=vars
                         )
 
+        # Synchronize associated Mission financial fields if present
+        try:
+            from decimal import Decimal, InvalidOperation
+            from missions.models import Mission
+            related_missions = instance.missions.all()
+            if related_missions.exists():
+                fd = instance.formulaire_data if isinstance(instance.formulaire_data, dict) else {}
+                fact = fd.get('facturation') if isinstance(fd.get('facturation'), dict) else {}
+
+                def safe_decimal(val, default='0'):
+                    if val is None or val == '':
+                        return Decimal(default)
+                    try:
+                        return Decimal(str(val))
+                    except (InvalidOperation, TypeError, ValueError):
+                        return Decimal(default)
+
+                mission_updates = {}
+                if instance.prix is not None:
+                    mission_updates['montant_paye'] = instance.prix
+
+                encaisse = fact.get('encaisse_par')
+                if encaisse in ['agence', 'profil']:
+                    mission_updates['encaisse_par'] = encaisse
+
+                paiement_statut = fact.get('statut_paiement_ui')
+                if paiement_statut:
+                    mission_updates['paiement_client_statut'] = paiement_statut
+
+                if 'montant_agence_doit_profil' in fact:
+                    mission_updates['montant_agence_doit_profil'] = safe_decimal(fact.get('montant_agence_doit_profil'))
+                if 'montant_profil_doit_agence' in fact:
+                    mission_updates['montant_profil_doit_agence'] = safe_decimal(fact.get('montant_profil_doit_agence'))
+                if 'montant_profil_annulation' in fact:
+                    mission_updates['montant_profil_annulation'] = safe_decimal(fact.get('montant_profil_annulation'))
+                if 'profil_sera_paye' in fact:
+                    mission_updates['profil_sera_paye'] = bool(fact.get('profil_sera_paye'))
+                if 'annulation_raison' in fact:
+                    mission_updates['annulation_raison'] = str(fact.get('annulation_raison') or '')
+
+                if mission_updates:
+                    related_missions.update(**mission_updates)
+        except Exception:
+            pass
+
         return instance
 
 
