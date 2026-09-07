@@ -832,6 +832,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
     client_neighborhood = serializers.CharField(source='client.neighborhood', read_only=True)
     client_address = serializers.CharField(source='client.address', read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True)
+    commercial_name = serializers.SerializerMethodField()
     assigned_to_operations_name = serializers.CharField(source='assigned_to_operations.full_name', read_only=True)
     mode_paiement_label = serializers.CharField(source='get_mode_paiement_display', read_only=True)
     statut_paiement_label = serializers.CharField(source='get_statut_paiement_display', read_only=True)
@@ -871,7 +872,7 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'formulaire_data', 'created_at', 'preference_horaire',
             'client_name', 'client_phone', 'client_whatsapp', 'client_email', 'client_entity', 'client_contact',
             'client_city', 'client_neighborhood', 'client_address',
-            'assigned_to', 'assigned_to_name', 'assigned_to_operations', 'assigned_to_operations_name', 'created_by', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
+            'assigned_to', 'assigned_to_name', 'commercial_name', 'assigned_to_operations', 'assigned_to_operations_name', 'created_by', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
             'note_commercial', 'note_operationnel', 'geste_commercial', 'planning', 'parent_demande',
             'nb_heures', 'nb_intervenants', 'promo_code', 'promo_code_name', 'promo_code_code'
         ]
@@ -954,6 +955,13 @@ class DemandeListSerializer(serializers.ModelSerializer):
             }
         return None
 
+    def get_commercial_name(self, obj):
+        if obj.assigned_to:
+            return obj.assigned_to.full_name
+        if obj.client and obj.client.assigned_commercial:
+            return obj.client.assigned_commercial.full_name
+        return None
+
 
 class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     client_name = serializers.CharField(source='client.display_name', read_only=True)
@@ -963,6 +971,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
     client_neighborhood = serializers.CharField(source='client.neighborhood', read_only=True)
     client_address = serializers.CharField(source='client.address', read_only=True)
     assigned_to_name = serializers.CharField(source='assigned_to.full_name', read_only=True)
+    commercial_name = serializers.SerializerMethodField()
     profil_name = serializers.SerializerMethodField()
     profil_id = serializers.SerializerMethodField()
     statut_besoin_label = serializers.SerializerMethodField()
@@ -987,6 +996,7 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
             'client_address',
             'assigned_to',
             'assigned_to_name',
+            'commercial_name',
             'service',
             'segment',
             'statut',
@@ -1077,6 +1087,13 @@ class DemandeHistoriqueSerializer(serializers.ModelSerializer):
         if obj.statut == Demande.ANNULE:
             return obj.avis_annulation or ''
         return ''
+
+    def get_commercial_name(self, obj):
+        if obj.assigned_to:
+            return obj.assigned_to.full_name
+        if obj.client and obj.client.assigned_commercial:
+            return obj.client.assigned_commercial.full_name
+        return None
 
 
 class PublicDemandeCreateSerializer(serializers.ModelSerializer):

@@ -102,6 +102,11 @@ class DemandeViewSet(viewsets.ModelViewSet):
         instance = serializer.instance
         validated_data = serializer.validated_data
 
+        # Auto-assign commercial if demand has none and is being updated/validated by an authenticated user
+        if not instance.assigned_to and not validated_data.get('assigned_to') and self.request.user and self.request.user.is_authenticated:
+            if validated_data.get('statut') in [Demande.ENCOURS, Demande.PLANIFIE, Demande.TERMINE] or instance.statut == Demande.EN_ATTENTE:
+                serializer.validated_data['assigned_to'] = self.request.user
+
         changes = {}
         for field_name, new_value in validated_data.items():
             old_value = getattr(instance, field_name, None)
@@ -114,6 +119,11 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 }
 
         demande = serializer.save()
+
+        # Synchronize client assigned_commercial if not set
+        if demande.assigned_to and demande.client and not demande.client.assigned_commercial:
+            demande.client.assigned_commercial = demande.assigned_to
+            demande.client.save(update_fields=['assigned_commercial'])
 
         # AUTOMATION: Sync child demands (ONLY for root parent subscription demands)
         if demande.parent_demande is None and demande.frequency == Demande.ABONNEMENT:
@@ -357,7 +367,23 @@ class DemandeViewSet(viewsets.ModelViewSet):
         if demande.statut != Demande.EN_ATTENTE:
             return Response({'error': 'Seules les demandes en attente peuvent être validées.'}, status=400)
         demande.statut = Demande.ENCOURS
+
+        commercial_id = request.data.get('commercial_id') or request.data.get('assigned_to')
+        if commercial_id:
+            from accounts.models import User
+            try:
+                demande.assigned_to = User.objects.get(pk=commercial_id, is_active=True)
+            except User.DoesNotExist:
+                pass
+        elif not demande.assigned_to and request.user and request.user.is_authenticated:
+            demande.assigned_to = request.user
+
         demande.save()
+
+        if demande.assigned_to and demande.client and not demande.client.assigned_commercial:
+            demande.client.assigned_commercial = demande.assigned_to
+            demande.client.save(update_fields=['assigned_commercial'])
+
         self._log_action(request.user, 'valider', demande)
         return Response(DemandeSerializer(demande).data)
 
