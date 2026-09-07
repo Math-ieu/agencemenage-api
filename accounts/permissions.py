@@ -316,95 +316,72 @@ class RoleBasedPermission(permissions.BasePermission):
             )
 
             if action == 'envoyer_profil':
-                if 'postuler_demande' not in permissions_list:
-                    return False
-                return True if is_exempt else is_concerned
+                return 'postuler_demande' in permissions_list
 
             if action == 'retirer_profil':
-                if 'retirer_profil_demande' not in permissions_list:
-                    return False
-                return True if is_exempt else is_concerned
+                return 'retirer_profil_demande' in permissions_list
 
             if action in ['update', 'partial_update']:
-                has_perm = (
+                return (
                     'modifier_demande' in permissions_list or 
                     'editer_besoin' in permissions_list or 
                     'editer_besoin_agence' in permissions_list or 
                     'modifier_facture' in permissions_list or 
-                    'editer_besoin_facture' in permissions_list
+                    'editer_besoin_facture' in permissions_list or
+                    has_traiter or
+                    has_creer_valider
                 )
-                return has_perm if is_exempt else (has_perm and is_concerned)
 
             elif action == 'annuler':
-                has_perm = 'refuser_demande' in permissions_list or 'annulation_demande' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                return (
+                    'refuser_demande' in permissions_list or 
+                    'annulation_demande' in permissions_list or 
+                    has_traiter or 
+                    has_creer_valider
+                )
 
             elif action == 'confirmer_cao':
-                has_perm = 'confirmation_avant_operation' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                return (
+                    'confirmation_avant_operation' in permissions_list or 
+                    has_traiter or 
+                    has_creer_valider
+                )
 
             elif action == 'valider':
-                if is_exempt:
-                    return has_traiter or has_creer_valider
-                if obj.created_by == user and has_creer_valider:
-                    return True
-                if (obj.assigned_to == user or obj.assigned_to_operations == user) and has_traiter:
-                    return True
-                return False
+                return has_traiter or has_creer_valider
 
             elif action == 'affecter':
-                has_perm = 'affecter_commercial' in permissions_list or 'traiter_demandes_affectees' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                return 'affecter_commercial' in permissions_list or 'traiter_demandes_affectees' in permissions_list
 
             elif action == 'affecter_operations':
-                has_perm = 'assigner_charge_operation' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                return 'assigner_charge_operation' in permissions_list
 
             elif action == 'nrp':
-                has_perm = 'consulter_demandes' in permissions_list or 'modifier_demande' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                return 'consulter_demandes' in permissions_list or 'modifier_demande' in permissions_list or has_traiter or has_creer_valider
 
             elif action == 'destroy':
-                has_perm = 'supprimer_demande_dashboard' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                return 'supprimer_demande_dashboard' in permissions_list
 
             elif action == 'generate_document':
                 doc_type = request.data.get('type')
                 if doc_type == 'facture':
-                    has_perm = 'generer_facture' in permissions_list
+                    return 'generer_facture' in permissions_list
                 elif doc_type == 'devis':
-                    has_perm = 'creer_devis' in permissions_list
-                else:
-                    has_perm = 'consulter_demandes' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                    return 'creer_devis' in permissions_list
+                return 'consulter_demandes' in permissions_list
 
             elif action == 'send_whatsapp':
                 doc_type = request.data.get('type')
                 if doc_type == 'facture':
-                    has_perm = 'envoi_facture_client' in permissions_list
+                    return 'envoi_facture_client' in permissions_list
                 elif doc_type == 'feedback':
-                    has_perm = 'consulter_retours_qualite' in permissions_list or 'repondre_avis_clients' in permissions_list
+                    return 'consulter_retours_qualite' in permissions_list or 'repondre_avis_clients' in permissions_list
                 elif doc_type == 'devis':
-                    has_perm = 'creer_devis' in permissions_list
-                else:
-                    has_perm = 'consulter_demandes' in permissions_list
-                return has_perm if is_exempt else (has_perm and is_concerned)
+                    return 'creer_devis' in permissions_list
+                return 'consulter_demandes' in permissions_list
                 
-            # Case A: Created by user
-            if obj.created_by == user:
-                return has_creer_valider
-                
-            # Case B: Assigned to user
-            if obj.assigned_to == user or obj.assigned_to_operations == user:
-                return has_traiter
-                
-            # Case C: Unassigned website demand
-            if obj.source == 'site' and obj.assigned_to is None:
-                if action in ['retrieve', 'affecter']:
-                    return has_traiter
-                return False
-                
-            return False
+            # Fallback for retrieve or other operations
+            return has_traiter or has_creer_valider or has_consulter_demandes or has_consulter_dashboard
             
         # 2. ClientViewSet
         if view_name == 'ClientViewSet':

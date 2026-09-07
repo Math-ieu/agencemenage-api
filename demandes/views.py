@@ -80,36 +80,8 @@ class DemandeViewSet(viewsets.ModelViewSet):
         return [IsAuthenticated(), RoleBasedPermission()]
     
     def get_queryset(self):
-        user = self.request.user
-        qs = super().get_queryset()
-        if user and user.is_authenticated and user.role != 'admin':
-            from django.db.models import Q
-            from accounts.models import RolePermission
-            from accounts.permissions import map_role_to_db_key
-            
-            db_role = map_role_to_db_key(user.role)
-            try:
-                rp = RolePermission.objects.filter(role=db_role).first()
-                permissions_list = rp.permissions if rp else []
-            except Exception:
-                permissions_list = []
-                
-            has_traiter = 'traiter_demandes_affectees' in permissions_list
-            has_creer_valider = 'creer_valider_demande' in permissions_list
-            has_consulter_demandes = 'consulter_demandes' in permissions_list
-            has_consulter_dashboard = 'consulter_dashboard' in permissions_list
-            
-            if has_consulter_demandes or has_consulter_dashboard:
-                conditions = Q()
-            else:
-                conditions = Q(pk__in=[])
-                if has_creer_valider:
-                    conditions |= Q(created_by=user)
-                if has_traiter:
-                    conditions |= Q(assigned_to=user) | Q(assigned_to_operations=user) | Q(source='site', assigned_to__isnull=True)
-                
-            qs = qs.filter(conditions)
-        return qs
+        return super().get_queryset()
+
 
     def list(self, request, *args, **kwargs):
         try:
@@ -547,7 +519,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
             return Response({'error': str(e)}, status=500)
 
     @action(detail=True, methods=['post'])
-    def send_whatsapp(self, request, pk=None):
+    def send_whatsapp(self, request, pk=None): 
         """Action manuelle pour envoyer un document spécifique via WhatsApp."""
         demande = self.get_object()
         doc_type = request.data.get('type')  # 'devis', 'png', 'cao_profil', 'feedback'

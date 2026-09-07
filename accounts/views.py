@@ -151,7 +151,17 @@ class UserViewSet(viewsets.ModelViewSet):
         qs = super().get_queryset()
         role = self.request.query_params.get('role')
         if role:
-            qs = qs.filter(role=role)
+            if ',' in role:
+                roles = [r.strip() for r in role.split(',') if r.strip()]
+                qs = qs.filter(role__in=roles)
+            else:
+                qs = qs.filter(role=role)
+        is_active = self.request.query_params.get('is_active')
+        if is_active is not None:
+            if is_active.lower() in ['true', '1']:
+                qs = qs.filter(is_active=True)
+            elif is_active.lower() in ['false', '0']:
+                qs = qs.filter(is_active=False)
         return qs
 
 
