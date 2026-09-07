@@ -874,7 +874,15 @@ class DemandeViewSet(viewsets.ModelViewSet):
             'share_id': str(share.uuid),
             'client_name': demande.client.display_name if demande.client else 'Inconnu'
         })
-        return Response({'success': True, 'agent_id': agent.pk, 'demande_id': demande.pk, 'share_id': share.uuid})
+        share_link = f"https://profil.agencemenage.ma/view/{share.uuid}"
+        return Response({
+            'success': True,
+            'agent_id': agent.pk,
+            'demande_id': demande.pk,
+            'share_id': str(share.uuid),
+            'share_link': share_link,
+            'agent_name': getattr(agent, 'full_name', '') or f"{agent.first_name} {agent.last_name}".strip(),
+        })
 
     @action(detail=True, methods=['post'])
     def retirer_profil(self, request, pk=None):

@@ -89,6 +89,8 @@ class DemandeSerializer(serializers.ModelSerializer):
     regenerer_devis = serializers.BooleanField(write_only=True, required=False, default=False)
     envoyer_whatsapp = serializers.BooleanField(write_only=True, required=False, default=False)
     profils_envoyes = AgentListSerializer(many=True, read_only=True)
+    profil_share_link = serializers.SerializerMethodField()
+    profil_share_links = serializers.SerializerMethodField()
     geste_commercial = serializers.SerializerMethodField()
     planning = SubscriptionPlanningSerializer(read_only=True)
     nb_heures = serializers.SerializerMethodField()
@@ -100,7 +102,29 @@ class DemandeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Demande
         fields = '__all__'
-        extra_fields = ['reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants', 'promo_code_name', 'promo_code_code']
+        extra_fields = ['reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants', 'promo_code_name', 'promo_code_code', 'profil_share_link', 'profil_share_links']
+
+    def get_profil_share_link(self, obj):
+        agent = obj.profils_envoyes.order_by('id').last()
+        if not agent:
+            return ''
+
+        share, _ = ProfilShare.objects.get_or_create(demande=obj, agent=agent)
+        return f"https://profil.agencemenage.ma/view/{share.uuid}"
+
+    def get_profil_share_links(self, obj):
+        agents = obj.profils_envoyes.order_by('id')
+        links = []
+
+        for agent in agents:
+            share, _ = ProfilShare.objects.get_or_create(demande=obj, agent=agent)
+            links.append({
+                'agent_id': agent.id,
+                'agent_name': getattr(agent, 'full_name', '') or f"{agent.first_name} {agent.last_name}".strip(),
+                'link': f"https://profil.agencemenage.ma/view/{share.uuid}",
+            })
+
+        return links
 
     def get_nb_heures(self, obj):
         fd = obj.formulaire_data or {}
