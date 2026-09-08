@@ -518,17 +518,35 @@ class DemandeSerializer(serializers.ModelSerializer):
             new_fd = validated_data['formulaire_data']
             merged_fd = {**existing_fd, **new_fd}
 
+            is_child_demand = bool(instance.parent_demande or validated_data.get('parent_demande'))
+
             # Keep nested facturation dict in sync if present
             if isinstance(merged_fd.get('facturation'), dict):
                 fact_dict = dict(merged_fd['facturation'])
-                st_fact = merged_fd.get('statut_facturation')
-                if st_fact == 'Payé':
-                    fact_dict['statut_facturation'] = 'Payé'
-                    fact_dict['statut_paiement_ui'] = 'paye'
-                elif st_fact in ['Non défini', 'Non payé']:
-                    fact_dict['statut_facturation'] = st_fact
-                    fact_dict['statut_paiement_ui'] = 'non_paye'
+                explicit_ui = (new_fd.get('facturation') or {}).get('statut_paiement_ui') or new_fd.get('statut_paiement_ui')
+                
+                if is_child_demand:
+                    # Clean up parent contract specific fields from child demand
+                    merged_fd.pop('statut_facturation', None)
+                    fact_dict.pop('statut_facturation', None)
+                    merged_fd.pop('statut_mois_prochain', None)
+                    if explicit_ui:
+                        fact_dict['statut_paiement_ui'] = explicit_ui
+                else:
+                    st_fact = merged_fd.get('statut_facturation')
+                    if not explicit_ui:
+                        if st_fact == 'Payé':
+                            fact_dict['statut_facturation'] = 'Payé'
+                            fact_dict['statut_paiement_ui'] = 'paye'
+                        elif st_fact in ['Non défini', 'Non payé']:
+                            fact_dict['statut_facturation'] = st_fact
+                            fact_dict['statut_paiement_ui'] = 'non_paye'
+                    else:
+                        fact_dict['statut_paiement_ui'] = explicit_ui
+
                 merged_fd['facturation'] = fact_dict
+                if 'statut_paiement_ui' in fact_dict:
+                    merged_fd['statut_paiement_ui'] = fact_dict['statut_paiement_ui']
 
             validated_data['formulaire_data'] = merged_fd
 

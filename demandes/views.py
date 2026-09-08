@@ -860,6 +860,39 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         if not demande.profils_envoyes.filter(pk=agent.pk).exists():
             demande.profils_envoyes.add(agent)
+
+        # Auto-update parts_repartition for automatic validation
+        parts = list(demande.parts_repartition) if isinstance(demande.parts_repartition, list) else []
+        if not any(str(p.get('profile_id')) == str(agent.pk) for p in parts if isinstance(p, dict)):
+            is_interne = (getattr(agent, 'categorie', None) == 'interne')
+            fd = demande.formulaire_data if isinstance(demande.formulaire_data, dict) else {}
+            nb_h = float(fd.get('duree_heures') or fd.get('nb_heures') or demande.nb_heures or 4)
+            rate_val = 0 if is_interne else 30
+            amt = 0 if is_interne else round(nb_h * rate_val, 2)
+            parts.append({
+                'profile_id': agent.pk,
+                'hours': nb_h,
+                'rate_value': rate_val,
+                'rate_type': 'taux_horaire_standard',
+                'amount': amt,
+                'is_delegate': len(parts) == 0,
+            })
+            total_parts = sum(p.get('amount', 0) for p in parts)
+            prix_val = float(demande.prix or 0)
+            part_ag = max(0.0, round(prix_val - total_parts, 2))
+            demande.parts_repartition = parts
+            demande.part_agence = Decimal(str(part_ag))
+            if isinstance(demande.formulaire_data, dict):
+                fact = demande.formulaire_data.setdefault('facturation', {})
+                fact['parts_repartition'] = parts
+                fact['part_agence'] = part_ag
+                if fact.get('statut_paiement_ui') == 'agence_payee_client':
+                    fact['montant_agence_doit_profil'] = total_parts
+                elif fact.get('statut_paiement_ui') == 'profil_paye_client':
+                    fact['montant_profil_doit_agence'] = part_ag
+                demande.formulaire_data['parts_repartition'] = parts
+                demande.formulaire_data['part_agence'] = part_ag
+            demande.save(update_fields=['parts_repartition', 'part_agence', 'formulaire_data'])
             
         share = ProfilShare.objects.filter(demande=demande, agent=agent).first()
         if not share:
@@ -899,6 +932,25 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         if demande.profils_envoyes.filter(pk=agent.pk).exists():
             demande.profils_envoyes.remove(agent)
+            parts = [p for p in (demande.parts_repartition or []) if isinstance(p, dict) and str(p.get('profile_id')) != str(agent.pk)]
+            if len(parts) == 1:
+                parts[0]['is_delegate'] = True
+            total_parts = sum(p.get('amount', 0) for p in parts)
+            prix_val = float(demande.prix or 0)
+            part_ag = max(0.0, round(prix_val - total_parts, 2))
+            demande.parts_repartition = parts
+            demande.part_agence = Decimal(str(part_ag))
+            if isinstance(demande.formulaire_data, dict):
+                fact = demande.formulaire_data.setdefault('facturation', {})
+                fact['parts_repartition'] = parts
+                fact['part_agence'] = part_ag
+                if fact.get('statut_paiement_ui') == 'agence_payee_client':
+                    fact['montant_agence_doit_profil'] = total_parts
+                elif fact.get('statut_paiement_ui') == 'profil_paye_client':
+                    fact['montant_profil_doit_agence'] = part_ag
+                demande.formulaire_data['parts_repartition'] = parts
+                demande.formulaire_data['part_agence'] = part_ag
+            demande.save(update_fields=['parts_repartition', 'part_agence', 'formulaire_data'])
             self._log_action(request.user, 'retirer_profil', demande, extra_data={
                 'agent_id': agent.pk,
                 'agent_name': agent.full_name,
@@ -1955,6 +2007,9 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
     session_price_ht = round(session_price / 1.2, 2) if tva_active else session_price
     
     new_formulaire_data = dict(parent_demande.formulaire_data) if isinstance(parent_demande.formulaire_data, dict) else {}
+    new_formulaire_data.pop('statut_facturation', None)
+    new_formulaire_data.pop('statut_mois_prochain', None)
+    new_formulaire_data.pop('mois_data', None)
     
     subscription_month = 1
     try:
@@ -1984,6 +2039,32 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
     except (ValueError, TypeError):
         nb_h_val = 4.0
 
+    child_parts = []
+    if parent_demande.profils_envoyes.exists():
+        profiles = list(parent_demande.profils_envoyes.all())
+        for idx, p in enumerate(profiles):
+            is_interne = (getattr(p, 'categorie', None) == 'interne')
+            rate_val = 0 if is_interne else 30
+            amt = 0 if is_interne else round(nb_h_val * rate_val, 2)
+            child_parts.append({
+                'profile_id': p.id,
+                'hours': nb_h_val,
+                'rate_value': rate_val,
+                'rate_type': 'taux_horaire_standard',
+                'amount': amt,
+                'is_delegate': (idx == 0),
+            })
+
+    total_parts_amt = sum(p['amount'] for p in child_parts)
+    agency_share = max(0.0, round(session_price - total_parts_amt, 2))
+
+    parent_fact = parent_demande.formulaire_data.get('facturation', {}) if isinstance(parent_demande.formulaire_data, dict) else {}
+    parent_is_paid = (parent_demande.statut_paiement in [Demande.INTEGRAL, Demande.PAYE, 'integral', 'paye']) or (parent_fact.get('statut_facturation') == 'Payé')
+    
+    default_statut_ui = 'agence_payee_client' if parent_is_paid else 'non_confirme'
+    default_statut_paiement = Demande.PARTIEL if parent_is_paid else Demande.NON_PAYE
+    default_encaisse_par = 'agence' if parent_is_paid else ''
+
     new_formulaire_data['duree_heures'] = nb_h_val
     new_formulaire_data['nb_heures'] = nb_h_val
     new_formulaire_data['subscription_month'] = subscription_month
@@ -2001,16 +2082,22 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         'montant_ht': session_price_ht,
         'tva_active': tva_active,
         'montant_ttc': session_price,
-        'montant_verse': 0,
+        'montant_verse': session_price if parent_is_paid else 0,
         'facturation_annulee': False,
-        'statut_paiement_ui': 'non_confirme',
+        'statut_paiement_ui': default_statut_ui,
         'mode_paiement': parent_demande.mode_paiement,
-        'part_agence': 0,
-        'parts_repartition': [],
+        'encaisse_par': default_encaisse_par,
+        'part_agence': agency_share,
+        'parts_repartition': child_parts,
+        'montant_agence_doit_profil': total_parts_amt if parent_is_paid else 0,
+        'montant_profil_doit_agence': 0,
     }
+    new_formulaire_data['statut_paiement_ui'] = default_statut_ui
+    new_formulaire_data['part_agence'] = agency_share
+    new_formulaire_data['parts_repartition'] = child_parts
     
     initial_statut = Demande.ENCOURS
-    initial_statut_paiement = Demande.NON_PAYE
+    initial_statut_paiement = default_statut_paiement
     if isinstance(parent_demande.formulaire_data, dict):
         date_overrides = parent_demande.formulaire_data.get('date_overrides', {})
         if isinstance(date_overrides, dict):
@@ -2033,7 +2120,8 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         heure_intervention=time_val or parent_demande.heure_intervention or '09:00',
         nb_heures=int(nb_h_val),
         prix=Decimal(str(session_price)),
-        part_agence=Decimal('0'),
+        part_agence=Decimal(str(agency_share)),
+        parts_repartition=child_parts,
         mode_paiement=parent_demande.mode_paiement,
         statut_paiement=initial_statut_paiement,
         note_commercial=parent_demande.note_commercial,
