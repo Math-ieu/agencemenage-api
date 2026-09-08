@@ -40,16 +40,25 @@ def parse_intervention_start_time(demande):
 def get_intervention_duration(demande):
     """
     Extrait le nombre d'heures de la prestation (durée).
+    Priorise duree_heures et nb_heures pour éviter la confusion avec duree en mois des abonnements.
     Par défaut : 4h si non renseigné.
     """
     fd = demande.formulaire_data if isinstance(demande.formulaire_data, dict) else {}
+    parent_fd = {}
+    if demande.parent_demande and isinstance(demande.parent_demande.formulaire_data, dict):
+        parent_fd = demande.parent_demande.formulaire_data
+
     val = (
-        fd.get('nb_heures') or
-        fd.get('duree') or
         fd.get('duree_heures') or
+        fd.get('nb_heures') or
+        parent_fd.get('duree_heures') or
+        parent_fd.get('nb_heures') or
+        getattr(demande, 'nb_heures', None) or
+        (getattr(demande.parent_demande, 'nb_heures', None) if demande.parent_demande else None) or
         fd.get('heures') or
         fd.get('duration') or
-        getattr(demande, 'nb_heures', None) or
+        fd.get('duree') or
+        parent_fd.get('duree') or
         4
     )
     try:
@@ -95,13 +104,17 @@ def send_whatsapp_alert_to_backoffice(demande, start_time, end_dt, duration_hour
 
     # Préparation des 5 variables
     # {{1}} Type de ménage
-    type_menage = str(demande.service or 'Prestation de ménage')
+    type_menage = str(demande.service or (demande.parent_demande.service if demande.parent_demande else '') or 'Prestation de ménage')
     # {{2}} Nom du client
     client_name = 'Client'
     if demande.client:
         client_name = demande.client.display_name
+    elif demande.parent_demande and demande.parent_demande.client:
+        client_name = demande.parent_demande.client.display_name
     elif isinstance(demande.formulaire_data, dict) and demande.formulaire_data.get('nom'):
         client_name = demande.formulaire_data['nom']
+    elif demande.parent_demande and isinstance(demande.parent_demande.formulaire_data, dict) and demande.parent_demande.formulaire_data.get('nom'):
+        client_name = demande.parent_demande.formulaire_data['nom']
 
     # {{3}} Date
     date_str = demande.date_intervention.strftime('%d/%m/%Y') if demande.date_intervention else datetime.date.today().strftime('%d/%m/%Y')
@@ -140,6 +153,25 @@ def send_whatsapp_alert_to_backoffice(demande, start_time, end_dt, duration_hour
     return sent_count
 
 
+def sync_child_status_to_parent(demande):
+    """
+    Synchronise le statut d'une intervention enfant vers date_overrides du contrat parent.
+    """
+    if demande.parent_demande and demande.date_intervention:
+        try:
+            parent = demande.parent_demande
+            child_iso = demande.date_intervention.isoformat()
+            if not isinstance(parent.formulaire_data, dict):
+                parent.formulaire_data = {}
+            overrides = parent.formulaire_data.setdefault('date_overrides', {})
+            existing_ov = overrides.get(child_iso) or {}
+            if existing_ov.get('statut') != demande.statut:
+                overrides[child_iso] = {**existing_ov, 'statut': demande.statut}
+                parent.save(update_fields=['formulaire_data'])
+        except Exception as e:
+            logger.error(f"Erreur sync_child_status_to_parent pour demande #{demande.id}: {e}")
+
+
 def sync_prestation_workflow():
     """
     Moteur principal de synchronisation :
@@ -168,10 +200,15 @@ def sync_prestation_workflow():
     }
 
     for d in eligible_demandes:
+        # Exclure le contrat mère d'un abonnement (seules les demandes enfants sont des interventions unitaires)
+        if d.parent_demande is None and d.frequency == Demande.ABONNEMENT:
+            continue
+
         # Si statut est en_cours mais CAO est validé ('oui' ou True), aligner sur pres_confirmee
         if d.statut == Demande.ENCOURS and d.cao in ['oui', True, 'true', 'confirmed']:
             d.statut = Demande.PRES_CONFIRMEE
             d.save(update_fields=['statut'])
+            sync_child_status_to_parent(d)
 
         # Ne traiter que les demandes ayant une date d'intervention
         d_date = d.date_intervention or today
@@ -186,6 +223,7 @@ def sync_prestation_workflow():
             if now >= start_dt:
                 d.statut = Demande.PRES_EN_COURS
                 d.save(update_fields=['statut'])
+                sync_child_status_to_parent(d)
                 stats['to_en_cours'] += 1
                 logger.info(f"Demande #{d.id} passée automatiquement en 'pres_en_cours'")
 
@@ -194,6 +232,7 @@ def sync_prestation_workflow():
             if now >= end_dt:
                 d.statut = Demande.PRES_A_CONFIRMER
                 d.save(update_fields=['statut'])
+                sync_child_status_to_parent(d)
                 stats['to_a_confirmer'] += 1
                 logger.info(f"Demande #{d.id} passée automatiquement en 'pres_a_confirmer'")
 

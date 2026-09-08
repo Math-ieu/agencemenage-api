@@ -1976,6 +1976,16 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
     except Exception:
         pass
 
+    nb_h = 4
+    if isinstance(parent_demande.formulaire_data, dict):
+        nb_h = parent_demande.formulaire_data.get('duree_heures') or parent_demande.formulaire_data.get('nb_heures') or parent_demande.nb_heures or 4
+    try:
+        nb_h_val = float(nb_h)
+    except (ValueError, TypeError):
+        nb_h_val = 4.0
+
+    new_formulaire_data['duree_heures'] = nb_h_val
+    new_formulaire_data['nb_heures'] = nb_h_val
     new_formulaire_data['subscription_month'] = subscription_month
     new_formulaire_data['frequence'] = parent_demande.frequency_label or 'Abonnement'
     new_formulaire_data['frequency'] = 'abonnement'
@@ -2011,7 +2021,7 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
                     initial_statut = ov_st
                     initial_statut_paiement = Demande.EN_ATTENTE
 
-    return Demande.objects.create(
+    child_demande = Demande.objects.create(
         client=parent_demande.client,
         service=parent_demande.service,
         segment=parent_demande.segment,
@@ -2021,6 +2031,7 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         frequency_label=parent_demande.frequency_label or "Abonnement",
         date_intervention=date_val,
         heure_intervention=time_val or parent_demande.heure_intervention or '09:00',
+        nb_heures=int(nb_h_val),
         prix=Decimal(str(session_price)),
         part_agence=Decimal('0'),
         mode_paiement=parent_demande.mode_paiement,
@@ -2034,6 +2045,9 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         created_by=parent_demande.created_by,
         parent_demande=parent_demande,
     )
+    if parent_demande.profils_envoyes.exists():
+        child_demande.profils_envoyes.set(parent_demande.profils_envoyes.all())
+    return child_demande
 
 def sync_subscription_child_demands(demande, planning):
     """
