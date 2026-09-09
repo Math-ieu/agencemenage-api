@@ -41,6 +41,7 @@ class SiteConfigPublicView(APIView):
     Aucune authentification requise.
     """
     permission_classes = [permissions.AllowAny]
+    authentication_classes = []
 
     def get(self, request, *args, **kwargs):
         config = get_site_config()

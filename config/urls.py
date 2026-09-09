@@ -47,12 +47,20 @@ router.register(r'blog/posts', PostViewSet, basename='blog-post')
 urlpatterns = [
     path('admin/', admin.site.urls),
 
+    # Public endpoint (no auth required — from website)
+    path('api/public/demandes/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demande_create'),
+    path('api/public/demand/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demand_create'),
+    path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
+    path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
+    path('api/public/promos/validate/', PublicPromoCodeValidateView.as_view(), name='public_promos_validate'),
+    path('api/public/site-config/', SiteConfigPublicView.as_view(), name='public_site_config'),
+    path('api/public/site-config', SiteConfigPublicView.as_view(), name='public_site_config_no_slash'),
+
     # API routes
     path('api/', include(router.urls)),
     path('api/marketing/', include('marketing.urls')),
     path('api/airbnb/', include('airbnb.urls')),
     path('api/site/', include('site_settings.urls')),
-
 
     # Auth endpoints
     path('api/auth/login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -66,14 +74,6 @@ urlpatterns = [
 
     # Public media endpoint — serves files from S3 / Railway bucket
     path('api/media/<path:file_path>/', MediaFileView.as_view(), name='media_file'),
-
-    # Public endpoint (no auth required — from website)
-    path('api/public/demandes/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demande_create'),
-    path('api/public/demand/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demand_create'),
-    path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
-    path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
-    path('api/public/promos/validate/', PublicPromoCodeValidateView.as_view(), name='public_promos_validate'),
-    path('api/public/site-config/', SiteConfigPublicView.as_view(), name='public_site_config'),
 
 
     # OpenAPI docs
