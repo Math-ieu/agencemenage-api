@@ -104,7 +104,15 @@ class DemandeViewSet(viewsets.ModelViewSet):
 
         # Auto-assign commercial if demand has none and is being updated/validated by an authenticated user
         if not instance.assigned_to and not validated_data.get('assigned_to') and self.request.user and self.request.user.is_authenticated:
-            if validated_data.get('statut') in [Demande.ENCOURS, Demande.PLANIFIE, Demande.TERMINE] or instance.statut == Demande.EN_ATTENTE:
+            active_statuts = [
+                Demande.ENCOURS,
+                Demande.PRES_CONFIRMEE,
+                Demande.PRES_EN_COURS,
+                Demande.PRES_A_CONFIRMER,
+                Demande.PRES_TERMINEE,
+                Demande.TERMINE,
+            ]
+            if validated_data.get('statut') in active_statuts or instance.statut == Demande.EN_ATTENTE:
                 serializer.validated_data['assigned_to'] = self.request.user
 
         changes = {}

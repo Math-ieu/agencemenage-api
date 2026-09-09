@@ -23,6 +23,7 @@ class Demande(models.Model):
     PRES_A_CONFIRMER = 'pres_a_confirmer'
     PRES_TERMINEE = 'pres_terminee'
     RESILIE = 'resilie'
+    PLANIFIE = PRES_CONFIRMEE  # Alias pour compatibilité
     STATUT_CHOICES = [
         (EN_ATTENTE, 'En attente'),
         (ENCOURS, 'En cours'),
