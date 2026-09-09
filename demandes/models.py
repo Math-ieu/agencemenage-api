@@ -75,11 +75,13 @@ class Demande(models.Model):
     SUR_PLACE = 'sur_place'
     ESPECES = 'especes'
     CARTE = 'carte'
+    VIREMENT_ESPECES = 'virement_especes'
     PAIEMENT_CHOICES = [
         (VIREMENT, 'Par virement'),
         (CHEQUE, 'Par chèque'),
         (ESPECES, 'En espèces'),
         (CARTE, 'Par carte bancaire (solution de paiement en ligne)'),
+        (VIREMENT_ESPECES, 'Virement / Espèce'),
         (AGENCE, 'À l\'agence'),
         (SUR_PLACE, 'Sur place'),
     ]
@@ -133,7 +135,7 @@ class Demande(models.Model):
         max_length=30, choices=DEVIS_STATUT_CHOICES, default=DEVIS_BROUILLON,
         verbose_name="Statut du devis"
     )
-    mode_paiement = models.CharField(max_length=20, choices=PAIEMENT_CHOICES, blank=True)
+    mode_paiement = models.CharField(max_length=30, choices=PAIEMENT_CHOICES, blank=True)
     statut_paiement = models.CharField(max_length=30, choices=PAIEMENT_STATUT_CHOICES, default=NON_PAYE)
     avance_paiement = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
 

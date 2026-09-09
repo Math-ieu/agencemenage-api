@@ -394,6 +394,8 @@ class DemandeViewSet(viewsets.ModelViewSet):
         demande = self.get_object()
         if demande.statut != Demande.EN_ATTENTE:
             return Response({'error': 'Seules les demandes en attente peuvent être validées.'}, status=400)
+        if not demande.mode_paiement:
+            return Response({'error': 'Veuillez définir le mode de paiement.'}, status=400)
         demande.statut = Demande.ENCOURS
 
         commercial_id = request.data.get('commercial_id') or request.data.get('assigned_to')
