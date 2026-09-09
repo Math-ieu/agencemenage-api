@@ -111,6 +111,8 @@ class DemandeSerializer(serializers.ModelSerializer):
     cao = CAOField(required=False)
     promo_code_name = serializers.CharField(source='promo_code.name', read_only=True)
     promo_code_code = serializers.CharField(source='promo_code.code', read_only=True)
+    montant_virement = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
+    montant_especes = serializers.DecimalField(max_digits=10, decimal_places=2, required=False, allow_null=True)
 
     class Meta:
         model = Demande
@@ -118,8 +120,28 @@ class DemandeSerializer(serializers.ModelSerializer):
         extra_fields = [
             'reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants',
             'heures_supplementaires', 'heure_fin_prevue', 'duree_totale',
-            'promo_code_name', 'promo_code_code', 'profil_share_link', 'profil_share_links'
+            'promo_code_name', 'promo_code_code', 'profil_share_link', 'profil_share_links',
+            'montant_virement', 'montant_especes'
         ]
+
+    def to_representation(self, instance):
+        ret = super().to_representation(instance)
+        fd = instance.formulaire_data if isinstance(instance.formulaire_data, dict) else {}
+        fact = fd.get('facturation', {}) if isinstance(fd.get('facturation'), dict) else {}
+        mv = fd.get('montant_virement')
+        if mv is None:
+            mv = fact.get('montant_virement')
+        if mv is None and instance.mode_paiement == Demande.VIREMENT_ESPECES and instance.avance_paiement is not None:
+            mv = instance.avance_paiement
+        ret['montant_virement'] = float(mv) if mv is not None and mv != '' else None
+
+        me = fd.get('montant_especes')
+        if me is None:
+            me = fact.get('montant_especes')
+        if me is None and instance.mode_paiement == Demande.VIREMENT_ESPECES and instance.prix is not None and instance.avance_paiement is not None:
+            me = max(0, float(instance.prix) - float(instance.avance_paiement))
+        ret['montant_especes'] = float(me) if me is not None and me != '' else None
+        return ret
 
     def get_profil_share_link(self, obj):
         agent = obj.profils_envoyes.order_by('id').last()
@@ -540,6 +562,27 @@ class DemandeSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         self._stamp_parts_repartition(instance, validated_data)
+
+        # Handle montant_virement and montant_especes
+        montant_virement = validated_data.pop('montant_virement', None)
+        montant_especes = validated_data.pop('montant_especes', None)
+
+        if montant_virement is not None or montant_especes is not None:
+            if 'formulaire_data' not in validated_data:
+                validated_data['formulaire_data'] = dict(instance.formulaire_data) if isinstance(instance.formulaire_data, dict) else {}
+            fd_temp = validated_data['formulaire_data']
+            if not isinstance(fd_temp.get('facturation'), dict):
+                fd_temp['facturation'] = dict((instance.formulaire_data or {}).get('facturation', {})) if isinstance((instance.formulaire_data or {}).get('facturation'), dict) else {}
+            if montant_virement is not None:
+                fd_temp['montant_virement'] = float(montant_virement)
+                fd_temp['facturation']['montant_virement'] = float(montant_virement)
+                fd_temp['facturation']['montant_verse'] = float(montant_virement)
+                fd_temp['facturation']['avance_paiement'] = float(montant_virement)
+                validated_data['avance_paiement'] = montant_virement
+            if montant_especes is not None:
+                fd_temp['montant_especes'] = float(montant_especes)
+                fd_temp['facturation']['montant_especes'] = float(montant_especes)
+                fd_temp['facturation']['reste_a_payer'] = float(montant_especes)
         
         # Safely merge partial updates to formulaire_data with existing dictionary
         if 'formulaire_data' in validated_data and isinstance(validated_data['formulaire_data'], dict):
@@ -576,6 +619,23 @@ class DemandeSerializer(serializers.ModelSerializer):
                 merged_fd['facturation'] = fact_dict
                 if 'statut_paiement_ui' in fact_dict:
                     merged_fd['statut_paiement_ui'] = fact_dict['statut_paiement_ui']
+
+            mv = merged_fd.get('montant_virement') or (merged_fd.get('facturation') or {}).get('montant_virement')
+            me = merged_fd.get('montant_especes') or (merged_fd.get('facturation') or {}).get('montant_especes')
+            if mv is not None and 'avance_paiement' not in validated_data:
+                validated_data['avance_paiement'] = mv
+            if not isinstance(merged_fd.get('facturation'), dict):
+                merged_fd['facturation'] = {}
+            if mv is not None:
+                merged_fd['facturation']['montant_virement'] = float(mv)
+                if 'montant_verse' not in merged_fd['facturation']:
+                    merged_fd['facturation']['montant_verse'] = float(mv)
+                if 'avance_paiement' not in merged_fd['facturation']:
+                    merged_fd['facturation']['avance_paiement'] = float(mv)
+            if me is not None:
+                merged_fd['facturation']['montant_especes'] = float(me)
+                if 'reste_a_payer' not in merged_fd['facturation']:
+                    merged_fd['facturation']['reste_a_payer'] = float(me)
 
             validated_data['formulaire_data'] = merged_fd
 
@@ -942,6 +1002,8 @@ class DemandeListSerializer(serializers.ModelSerializer):
     cao = CAOField(required=False)
     promo_code_name = serializers.CharField(source='promo_code.name', read_only=True)
     promo_code_code = serializers.CharField(source='promo_code.code', read_only=True)
+    montant_virement = serializers.SerializerMethodField()
+    montant_especes = serializers.SerializerMethodField()
 
     class Meta:
         model = Demande
@@ -949,9 +1011,10 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'id', 'client', 'service', 'segment', 'source', 'statut', 'statut_besoin_label', 'frequency',
             'frequency_label', 'date_intervention', 'heure_intervention',
             'prix', 'montant_devis', 'montant_facture', 'is_devis', 'devis_statut', 'mode_paiement', 'statut_paiement',
-            'mode_paiement_label', 'statut_paiement_label', 'reste_a_payer', 'cao',
+            'mode_paiement_label', 'statut_paiement_label', 'avance_paiement', 'reste_a_payer', 'cao',
             'part_agence', 'parts_repartition',
             'statut_paiement_ui', 'montant_ht', 'montant_ttc', 'montant_verse',
+            'montant_virement', 'montant_especes',
             'montant_agence_doit_profil', 'montant_profil_doit_agence',
             'annulation_raison', 'profil_sera_paye', 'montant_profil_annulation',
             'formulaire_data', 'created_at', 'preference_horaire',
@@ -1008,7 +1071,35 @@ class DemandeListSerializer(serializers.ModelSerializer):
         return self._get_facturation_field(obj, 'montant_ttc', obj.prix)
 
     def get_montant_verse(self, obj):
-        return self._get_facturation_field(obj, 'montant_verse', 0)
+        verse = self._get_facturation_field(obj, 'montant_verse', None)
+        if verse is not None:
+            return verse
+        if obj.mode_paiement == Demande.VIREMENT_ESPECES:
+            fd = obj.formulaire_data if isinstance(obj.formulaire_data, dict) else {}
+            mv = fd.get('montant_virement') or (fd.get('facturation') or {}).get('montant_virement') or obj.avance_paiement
+            if mv is not None:
+                return float(mv)
+        if obj.avance_paiement is not None:
+            return float(obj.avance_paiement)
+        return 0
+
+    def get_montant_virement(self, obj):
+        fd = obj.formulaire_data if isinstance(obj.formulaire_data, dict) else {}
+        val = fd.get('montant_virement')
+        if val is None:
+            val = (fd.get('facturation') or {}).get('montant_virement')
+        if val is None and obj.mode_paiement == Demande.VIREMENT_ESPECES and obj.avance_paiement is not None:
+            val = obj.avance_paiement
+        return float(val) if val is not None and val != '' else None
+
+    def get_montant_especes(self, obj):
+        fd = obj.formulaire_data if isinstance(obj.formulaire_data, dict) else {}
+        val = fd.get('montant_especes')
+        if val is None:
+            val = (fd.get('facturation') or {}).get('montant_especes')
+        if val is None and obj.mode_paiement == Demande.VIREMENT_ESPECES and obj.prix is not None and obj.avance_paiement is not None:
+            val = max(0, float(obj.prix) - float(obj.avance_paiement))
+        return float(val) if val is not None and val != '' else None
 
     def get_montant_agence_doit_profil(self, obj):
         return self._get_facturation_field(obj, 'montant_agence_doit_profil', 0)

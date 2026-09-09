@@ -222,6 +222,19 @@ class Demande(models.Model):
         """Calcule automatiquement le reste à payer."""
         if not self.prix:
             return 0
+        if self.mode_paiement == self.VIREMENT_ESPECES:
+            if isinstance(self.formulaire_data, dict):
+                me = self.formulaire_data.get('montant_especes')
+                if me is None:
+                    me = (self.formulaire_data.get('facturation') or {}).get('montant_especes')
+                if me is not None and me != '':
+                    try:
+                        from decimal import Decimal
+                        return Decimal(str(me))
+                    except Exception:
+                        pass
+            avance = self.avance_paiement or 0
+            return max(0, self.prix - avance)
         if self.statut_paiement == self.NON_PAYE:
             return self.prix
         if self.statut_paiement == self.INTEGRAL:
