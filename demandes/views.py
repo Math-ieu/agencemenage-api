@@ -10,6 +10,7 @@ from django.db.models import Q
 from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse
 from .utils.document_generators import generate_devis_pdf, generate_recap_png
 import datetime
+from django.utils import timezone
 import mimetypes
 import os
 from decimal import Decimal
@@ -177,6 +178,25 @@ class DemandeViewSet(viewsets.ModelViewSet):
             demande.statut_paiement = Demande.EN_ATTENTE
             demande.save(update_fields=['statut_paiement'])
             self._trigger_automatic_feedback(demande)
+
+        # AUTOMATION: Désactiver l'alerte et repasser en pres_en_cours si heures supplémentaires repoussent l'heure de fin
+        if demande.statut == Demande.PRES_A_CONFIRMER:
+            try:
+                from demandes.utils.workflow_engine import calculate_start_end_datetimes, sync_child_status_to_parent
+                now_local = timezone.localtime(timezone.now())
+                _, end_dt, _, _ = calculate_start_end_datetimes(demande)
+                if now_local < end_dt:
+                    demande.statut = Demande.PRES_EN_COURS
+                    if not isinstance(demande.formulaire_data, dict):
+                        demande.formulaire_data = {}
+                    demande.formulaire_data['derniere_alerte_fin_prestation_at'] = None
+                    demande.formulaire_data['alerte_fin_prestation_count'] = 0
+                    demande.formulaire_data['alerte_annulee_pour_heures_sup'] = True
+                    demande.formulaire_data['derniere_annulation_alerte_at'] = now_local.isoformat()
+                    demande.save(update_fields=['statut', 'formulaire_data'])
+                    sync_child_status_to_parent(demande)
+            except Exception:
+                pass
 
 
         if changes:
@@ -473,6 +493,75 @@ class DemandeViewSet(viewsets.ModelViewSet):
             'confirmed_by': getattr(request.user, 'full_name', '') or getattr(request.user, 'username', '') or 'Système'
         })
         return Response(DemandeSerializer(demande).data)
+
+    @action(detail=True, methods=['post'], url_path='heures-supplementaires')
+    def heures_supplementaires(self, request, pk=None):
+        """
+        Définit ou ajoute des heures supplémentaires pour une prestation.
+        Si la prestation est au statut PRES_A_CONFIRMER et que la nouvelle heure de fin
+        est dans le futur (now < new_end_dt) :
+        - Désactive immédiatement l'alerte initiale et annule les notifications WhatsApp récurrentes.
+        - Repasse la prestation au statut PRES_EN_COURS.
+        - L'alerte reprendra uniquement à partir de la nouvelle heure de fin calculée.
+        """
+        from demandes.utils.workflow_engine import calculate_start_end_datetimes, sync_child_status_to_parent
+        demande = self.get_object()
+
+        try:
+            heures = float(request.data.get('heures', 0))
+        except (ValueError, TypeError):
+            return Response({'error': "Valeur d'heures supplémentaires invalide."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if heures < 0:
+            return Response({'error': "Le nombre d'heures supplémentaires ne peut pas être négatif."}, status=status.HTTP_400_BAD_REQUEST)
+
+        motif = str(request.data.get('motif', '')).strip()
+
+        if not isinstance(demande.formulaire_data, dict):
+            demande.formulaire_data = {}
+
+        now = timezone.localtime(timezone.now())
+
+        # Enregistrer les heures supplémentaires
+        demande.formulaire_data['heures_supplementaires'] = heures
+        if motif:
+            demande.formulaire_data['motif_heures_supplementaires'] = motif
+
+        # Recalculer les horaires avec les heures supplémentaires
+        start_dt, end_dt, start_time, duration_hours = calculate_start_end_datetimes(demande)
+
+        # Si l'alerte était active (PRES_A_CONFIRMER) et que la nouvelle fin est dans le futur :
+        alerte_desactivee = False
+        if demande.statut == Demande.PRES_A_CONFIRMER and now < end_dt:
+            demande.statut = Demande.PRES_EN_COURS
+            # Désactiver l'alerte et annuler les notifications WhatsApp
+            demande.formulaire_data['derniere_alerte_fin_prestation_at'] = None
+            demande.formulaire_data['alerte_fin_prestation_count'] = 0
+            demande.formulaire_data['alerte_annulee_pour_heures_sup'] = True
+            demande.formulaire_data['derniere_annulation_alerte_at'] = now.isoformat()
+            alerte_desactivee = True
+
+        demande.save(update_fields=['statut', 'formulaire_data'])
+        sync_child_status_to_parent(demande)
+
+        self._log_action(request.user, 'ajout_heures_supplementaires', demande, extra_data={
+            'heures_supplementaires': heures,
+            'nouvelle_fin': end_dt.strftime('%H:%M'),
+            'duree_totale': duration_hours,
+            'alerte_desactivee': alerte_desactivee,
+            'motif': motif,
+        })
+
+        return Response({
+            'success': True,
+            'demande': DemandeSerializer(demande).data,
+            'heures_supplementaires': heures,
+            'nouvelle_heure_fin': end_dt.strftime('%H:%M'),
+            'nouvelle_heure_fin_display': end_dt.strftime('%Hh%M'),
+            'duree_totale': duration_hours,
+            'alerte_desactivee': alerte_desactivee,
+            'message': f"{heures}h supplémentaire(s) enregistrée(s). Nouvelle heure de fin : {end_dt.strftime('%Hh%M')}."
+        })
 
     @action(detail=True, methods=['post'])
     def annuler(self, request, pk=None):

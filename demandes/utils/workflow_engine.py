@@ -37,9 +37,29 @@ def parse_intervention_start_time(demande):
     return datetime.time(9, 0)
 
 
+def get_intervention_overtime(demande):
+    """
+    Extrait le nombre d'heures supplémentaires définies pour l'intervention.
+    Prend en compte 'heures_supplementaires' et 'supplement_heures_nombre'.
+    """
+    fd = demande.formulaire_data if isinstance(demande.formulaire_data, dict) else {}
+    fact = fd.get('facturation', {}) if isinstance(fd.get('facturation'), dict) else {}
+    raw_sup = (
+        fd.get('heures_supplementaires') or
+        fd.get('supplement_heures_nombre') or
+        fact.get('supplement_heures_nombre') or
+        getattr(demande, 'heures_supplementaires', 0) or
+        0
+    )
+    try:
+        return max(0.0, float(raw_sup))
+    except (ValueError, TypeError):
+        return 0.0
+
+
 def get_intervention_duration(demande):
     """
-    Extrait le nombre d'heures de la prestation (durée).
+    Extrait le nombre total d'heures de la prestation (durée de base + heures supplémentaires).
     Priorise duree_heures et nb_heures pour éviter la confusion avec duree en mois des abonnements.
     Par défaut : 4h si non renseigné.
     """
@@ -63,9 +83,13 @@ def get_intervention_duration(demande):
     )
     try:
         val_float = float(val)
-        return max(val_float, 0.5)
+        base = max(val_float, 0.5)
     except (ValueError, TypeError):
-        return 4.0
+        base = 4.0
+
+    # Prise en compte des heures supplémentaires
+    sup = get_intervention_overtime(demande)
+    return base + sup
 
 
 def calculate_start_end_datetimes(demande, target_date=None):
@@ -197,6 +221,7 @@ def sync_prestation_workflow():
         'to_en_cours': 0,
         'to_a_confirmer': 0,
         'alerts_sent': 0,
+        'reverted_to_en_cours': 0,
     }
 
     for d in eligible_demandes:
@@ -235,6 +260,22 @@ def sync_prestation_workflow():
                 sync_child_status_to_parent(d)
                 stats['to_a_confirmer'] += 1
                 logger.info(f"Demande #{d.id} passée automatiquement en 'pres_a_confirmer'")
+
+        # ─── Étape 2b : Désactivation de l'alerte si heures sup définies (now < end_dt) ───
+        if d.statut == Demande.PRES_A_CONFIRMER and now < end_dt:
+            d.statut = Demande.PRES_EN_COURS
+            if not isinstance(d.formulaire_data, dict):
+                d.formulaire_data = {}
+            # Désactiver l'alerte initiale et annuler le cycle des notifications WhatsApp
+            d.formulaire_data['derniere_alerte_fin_prestation_at'] = None
+            d.formulaire_data['alerte_fin_prestation_count'] = 0
+            d.formulaire_data['alerte_annulee_pour_heures_sup'] = True
+            d.formulaire_data['derniere_annulation_alerte_at'] = now.isoformat()
+            d.save(update_fields=['statut', 'formulaire_data'])
+            sync_child_status_to_parent(d)
+            stats['reverted_to_en_cours'] += 1
+            logger.info(f"Demande #{d.id} repassée en 'pres_en_cours' suite à heures sup (alerte désactivée, nouvelle fin : {end_dt})")
+            continue
 
         # ─── Étape 3 : Alerte WhatsApp récurrente (toutes les 30 min) ───
         if d.statut == Demande.PRES_A_CONFIRMER:

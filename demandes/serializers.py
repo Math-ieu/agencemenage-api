@@ -105,6 +105,9 @@ class DemandeSerializer(serializers.ModelSerializer):
     planning = SubscriptionPlanningSerializer(read_only=True)
     nb_heures = serializers.SerializerMethodField()
     nb_intervenants = serializers.SerializerMethodField()
+    heures_supplementaires = serializers.SerializerMethodField()
+    heure_fin_prevue = serializers.SerializerMethodField()
+    duree_totale = serializers.SerializerMethodField()
     cao = CAOField(required=False)
     promo_code_name = serializers.CharField(source='promo_code.name', read_only=True)
     promo_code_code = serializers.CharField(source='promo_code.code', read_only=True)
@@ -112,7 +115,11 @@ class DemandeSerializer(serializers.ModelSerializer):
     class Meta:
         model = Demande
         fields = '__all__'
-        extra_fields = ['reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants', 'promo_code_name', 'promo_code_code', 'profil_share_link', 'profil_share_links']
+        extra_fields = [
+            'reste_a_payer', 'geste_commercial', 'nb_heures', 'nb_intervenants',
+            'heures_supplementaires', 'heure_fin_prevue', 'duree_totale',
+            'promo_code_name', 'promo_code_code', 'profil_share_link', 'profil_share_links'
+        ]
 
     def get_profil_share_link(self, obj):
         agent = obj.profils_envoyes.order_by('id').last()
@@ -139,6 +146,28 @@ class DemandeSerializer(serializers.ModelSerializer):
     def get_nb_heures(self, obj):
         fd = obj.formulaire_data or {}
         return fd.get('duree_heures') or fd.get('nb_heures') or fd.get('heures') or fd.get('duration') or fd.get('duree') or 0
+
+    def get_heures_supplementaires(self, obj):
+        try:
+            from demandes.utils.workflow_engine import get_intervention_overtime
+            return get_intervention_overtime(obj)
+        except Exception:
+            return 0.0
+
+    def get_duree_totale(self, obj):
+        try:
+            from demandes.utils.workflow_engine import get_intervention_duration
+            return get_intervention_duration(obj)
+        except Exception:
+            return None
+
+    def get_heure_fin_prevue(self, obj):
+        try:
+            from demandes.utils.workflow_engine import calculate_start_end_datetimes
+            _, end_dt, _, _ = calculate_start_end_datetimes(obj)
+            return end_dt.strftime('%H:%M')
+        except Exception:
+            return None
 
     def get_nb_intervenants(self, obj):
         return (obj.formulaire_data or {}).get('nb_intervenants') or (obj.formulaire_data or {}).get('nb_personnel') or (obj.formulaire_data or {}).get('numberOfPeople') or 1
@@ -907,6 +936,9 @@ class DemandeListSerializer(serializers.ModelSerializer):
     planning = SubscriptionPlanningSerializer(read_only=True)
     nb_heures = serializers.SerializerMethodField()
     nb_intervenants = serializers.SerializerMethodField()
+    heures_supplementaires = serializers.SerializerMethodField()
+    heure_fin_prevue = serializers.SerializerMethodField()
+    duree_totale = serializers.SerializerMethodField()
     cao = CAOField(required=False)
     promo_code_name = serializers.CharField(source='promo_code.name', read_only=True)
     promo_code_code = serializers.CharField(source='promo_code.code', read_only=True)
@@ -927,12 +959,34 @@ class DemandeListSerializer(serializers.ModelSerializer):
             'client_city', 'client_neighborhood', 'client_address',
             'assigned_to', 'assigned_to_name', 'commercial_name', 'assigned_to_operations', 'assigned_to_operations_name', 'created_by', 'nrp_count', 'profil_share_link', 'profil_share_links', 'documents', 'profils_envoyes',
             'note_commercial', 'note_operationnel', 'geste_commercial', 'planning', 'parent_demande',
-            'nb_heures', 'nb_intervenants', 'promo_code', 'promo_code_name', 'promo_code_code'
+            'nb_heures', 'nb_intervenants', 'heures_supplementaires', 'heure_fin_prevue', 'duree_totale', 'promo_code', 'promo_code_name', 'promo_code_code'
         ]
 
     def get_nb_heures(self, obj):
         fd = obj.formulaire_data or {}
         return fd.get('duree_heures') or fd.get('nb_heures') or fd.get('heures') or fd.get('duration') or fd.get('duree') or 0
+
+    def get_heures_supplementaires(self, obj):
+        try:
+            from demandes.utils.workflow_engine import get_intervention_overtime
+            return get_intervention_overtime(obj)
+        except Exception:
+            return 0.0
+
+    def get_duree_totale(self, obj):
+        try:
+            from demandes.utils.workflow_engine import get_intervention_duration
+            return get_intervention_duration(obj)
+        except Exception:
+            return None
+
+    def get_heure_fin_prevue(self, obj):
+        try:
+            from demandes.utils.workflow_engine import calculate_start_end_datetimes
+            _, end_dt, _, _ = calculate_start_end_datetimes(obj)
+            return end_dt.strftime('%H:%M')
+        except Exception:
+            return None
 
     def get_nb_intervenants(self, obj):
         return (obj.formulaire_data or {}).get('nb_intervenants') or (obj.formulaire_data or {}).get('nb_personnel') or (obj.formulaire_data or {}).get('numberOfPeople') or 1
