@@ -406,8 +406,66 @@ class DemandeViewSet(viewsets.ModelViewSet):
     def confirmer_fin(self, request, pk=None):
         """Confirme qu'une prestation est terminée → statut PRES_TERMINEE"""
         demande = self.get_object()
+
+        # Vérification facturation annulée / intervention gratuite
+        facturation = (demande.formulaire_data or {}).get('facturation', {})
+        statut_paiement_ui = facturation.get('statut_paiement_ui') or demande.statut_paiement
+        is_free_or_cancelled = (
+            statut_paiement_ui in ['intervention_gratuite', 'facturation_annulee'] or
+            demande.statut_paiement in ['intervention_gratuite', 'facturation_annulee'] or
+            facturation.get('facturation_annulee', False)
+        )
+
+        if not is_free_or_cancelled:
+            # Si c'est un enfant d'abonnement, vérifier également le statut du parent
+            effective_statut_ui = statut_paiement_ui
+            if demande.parent_demande and (effective_statut_ui in ['non_confirme', 'Non confirmé', Demande.NON_PAYE, None, '']):
+                parent_fact = (demande.parent_demande.formulaire_data or {}).get('facturation', {})
+                parent_statut_ui = parent_fact.get('statut_paiement_ui') or demande.parent_demande.statut_paiement
+                if parent_statut_ui and parent_statut_ui not in ['non_confirme', 'Non confirmé', Demande.NON_PAYE]:
+                    effective_statut_ui = parent_statut_ui
+
+            # 1. Vérification du statut de paiement
+            if effective_statut_ui in ['non_confirme', 'Non confirmé'] or (demande.statut_paiement == Demande.NON_PAYE and effective_statut_ui in ['non_confirme', 'Non confirmé', None, '']):
+                return Response(
+                    {'error': "Impossible de valider la prestation comme terminée : le statut de paiement est « Non confirmé »."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # 2. Vérification des parts
+            parts = demande.parts_repartition or facturation.get('parts_repartition', [])
+            if (not parts or not isinstance(parts, list)) and demande.parent_demande:
+                parent_fact = (demande.parent_demande.formulaire_data or {}).get('facturation', {})
+                parent_parts = demande.parent_demande.parts_repartition or parent_fact.get('parts_repartition', [])
+                if isinstance(parent_parts, list) and len(parent_parts) > 0:
+                    parts = parent_parts
+
+            total_parts = sum(float(p.get('amount') or 0) for p in parts) if isinstance(parts, list) else 0
+            single_part = float(facturation.get('part_profil') or facturation.get('montant_agence_doit_profil') or 0)
+
+            all_internes = False
+            if isinstance(parts, list) and len(parts) > 0:
+                if any(not p.get('profile_id') for p in parts):
+                    return Response(
+                        {'error': "Impossible de valider la prestation comme terminée : un profil n'a pas été sélectionné dans les parts."},
+                        status=status.HTTP_400_BAD_REQUEST
+                    )
+                from agents.models import Agent
+                profile_ids = [p.get('profile_id') for p in parts if p.get('profile_id')]
+                agents = Agent.objects.filter(id__in=profile_ids)
+                agent_dict = {a.id: a for a in agents}
+                all_internes = len(profile_ids) > 0 and all(agent_dict.get(pid) and agent_dict[pid].categorie == 'interne' for pid in profile_ids)
+
+            parts_valid = (total_parts > 0 or single_part > 0 or all_internes)
+            if not parts_valid:
+                return Response(
+                    {'error': "Impossible de valider la prestation comme terminée : les parts des intervenantes ne sont pas validées."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
         demande.statut = Demande.PRES_TERMINEE
-        demande.statut_paiement = Demande.EN_ATTENTE
+        if demande.statut_paiement == Demande.NON_PAYE:
+            demande.statut_paiement = Demande.EN_ATTENTE
         demande.save()
         
         self._trigger_automatic_feedback(demande)
