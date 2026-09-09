@@ -23,6 +23,8 @@ from feedback.views import FeedbackViewSet
 from blog.views import CategoryViewSet, PostViewSet
 from media.views import MediaFileView
 from marketing.views import PublicPromoCodeValidateView
+from site_settings.views import SiteConfigPublicView
+
 
 # Router
 router = DefaultRouter()
@@ -49,6 +51,8 @@ urlpatterns = [
     path('api/', include(router.urls)),
     path('api/marketing/', include('marketing.urls')),
     path('api/airbnb/', include('airbnb.urls')),
+    path('api/site/', include('site_settings.urls')),
+
 
     # Auth endpoints
     path('api/auth/login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
@@ -69,6 +73,8 @@ urlpatterns = [
     path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
     path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
     path('api/public/promos/validate/', PublicPromoCodeValidateView.as_view(), name='public_promos_validate'),
+    path('api/public/site-config/', SiteConfigPublicView.as_view(), name='public_site_config'),
+
 
     # OpenAPI docs
     path('api/schema/', SpectacularAPIView.as_view(), name='schema'),

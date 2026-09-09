@@ -40,6 +40,7 @@ INSTALLED_APPS = [
     'blog',
     'marketing',
     'airbnb',
+    'site_settings',
 ]
 
 MIDDLEWARE = [
