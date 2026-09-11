@@ -530,7 +530,8 @@ class DemandeSerializer(serializers.ModelSerializer):
                     except (ValueError, TypeError):
                         pass
             if not start_d:
-                start_d = datetime.date.today()
+                from django.utils import timezone
+                start_d = timezone.localdate()
 
             from .views import extract_jours_intervention_from_demande, sync_subscription_child_demands
             jours = extract_jours_intervention_from_demande(instance)
@@ -555,8 +556,9 @@ class DemandeSerializer(serializers.ModelSerializer):
 
             try:
                 sync_subscription_child_demands(instance, planning_obj)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error syncing child demands on serializer create: {e}", exc_info=True)
 
         return instance
 
@@ -777,7 +779,8 @@ class DemandeSerializer(serializers.ModelSerializer):
                     except (ValueError, TypeError):
                         pass
             if not start_d:
-                start_d = datetime.date.today()
+                from django.utils import timezone
+                start_d = timezone.localdate()
 
             from .views import extract_jours_intervention_from_demande, sync_subscription_child_demands
             jours = extract_jours_intervention_from_demande(instance)
@@ -802,8 +805,9 @@ class DemandeSerializer(serializers.ModelSerializer):
 
             try:
                 sync_subscription_child_demands(instance, planning_obj)
-            except Exception:
-                pass
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error syncing child demands on serializer update: {e}", exc_info=True)
 
             # If parent demand status changed (e.g. termine / annule / etc.), sync into date_overrides & matching child
             if instance.date_intervention and isinstance(instance.formulaire_data, dict):

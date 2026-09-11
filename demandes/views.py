@@ -414,6 +414,48 @@ class DemandeViewSet(viewsets.ModelViewSet):
             demande.client.assigned_commercial = demande.assigned_to
             demande.client.save(update_fields=['assigned_commercial'])
 
+        # Synchronisation immédiate des interventions de l'abonnement lors de la validation
+        if demande.frequency == Demande.ABONNEMENT and demande.parent_demande is None:
+            from django.utils import timezone
+            start_d = demande.date_intervention
+            if not start_d and isinstance(demande.formulaire_data, dict):
+                sd_str = demande.formulaire_data.get('date_demarrage') or demande.formulaire_data.get('date_debut')
+                if sd_str:
+                    try:
+                        start_d = datetime.date.fromisoformat(str(sd_str)[:10])
+                    except (ValueError, TypeError):
+                        pass
+            if not start_d:
+                start_d = timezone.localdate()
+
+            jours = extract_jours_intervention_from_demande(demande)
+            planning_obj, _ = SubscriptionPlanning.objects.get_or_create(
+                demande=demande,
+                defaults={
+                    'date_debut': start_d,
+                    'jours_intervention': jours,
+                    'statut': 'en_cours',
+                }
+            )
+            update_fields = []
+            if planning_obj.date_debut != start_d:
+                planning_obj.date_debut = start_d
+                update_fields.append('date_debut')
+            if planning_obj.jours_intervention != jours:
+                planning_obj.jours_intervention = jours
+                update_fields.append('jours_intervention')
+            if planning_obj.statut != 'en_cours':
+                planning_obj.statut = 'en_cours'
+                update_fields.append('statut')
+            if update_fields:
+                planning_obj.save(update_fields=update_fields)
+
+            try:
+                sync_subscription_child_demands(demande, planning_obj)
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(f"Error syncing child demands on validate for demande #{demande.id}: {e}", exc_info=True)
+
         self._log_action(request.user, 'valider', demande)
         return Response(DemandeSerializer(demande).data)
 
@@ -2051,7 +2093,8 @@ def build_default_semaines_for_planning(demande, planning=None, start_date=None,
                 except (ValueError, TypeError):
                     pass
         if not start_date:
-            start_date = datetime.date.today()
+            from django.utils import timezone
+            start_date = timezone.localdate()
 
     if not end_date:
         if planning and planning.date_fin:
@@ -2190,7 +2233,7 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
 
     nb_h = 4
     if isinstance(parent_demande.formulaire_data, dict):
-        nb_h = parent_demande.formulaire_data.get('duree_heures') or parent_demande.formulaire_data.get('nb_heures') or parent_demande.nb_heures or 4
+        nb_h = parent_demande.formulaire_data.get('duree_heures') or parent_demande.formulaire_data.get('nb_heures') or getattr(parent_demande, 'nb_heures', None) or 4
     try:
         nb_h_val = float(nb_h)
     except (ValueError, TypeError):
@@ -2275,7 +2318,6 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         frequency_label=parent_demande.frequency_label or "Abonnement",
         date_intervention=date_val,
         heure_intervention=time_val or parent_demande.heure_intervention or '09:00',
-        nb_heures=int(nb_h_val),
         prix=Decimal(str(session_price)),
         part_agence=Decimal(str(agency_share)),
         parts_repartition=child_parts,
@@ -2304,7 +2346,8 @@ def sync_subscription_child_demands(demande, planning):
     if not demande or not planning or demande.parent_demande is not None:
         return
         
-    today = datetime.date.today()
+    from django.utils import timezone
+    today = timezone.localdate()
     tomorrow = today + datetime.timedelta(days=1)
     
     date_overrides = demande.formulaire_data.get('date_overrides', {}) if isinstance(demande.formulaire_data, dict) else {}
@@ -2315,6 +2358,13 @@ def sync_subscription_child_demands(demande, planning):
         semaines = build_default_semaines_for_planning(demande, planning)
         planning.semaines = semaines
         planning_modified = True
+
+    if not planning.date_fin and len(semaines) > 0 and semaines[-1].get('date_fin'):
+        try:
+            planning.date_fin = datetime.date.fromisoformat(semaines[-1].get('date_fin'))
+            planning_modified = True
+        except (ValueError, TypeError):
+            pass
 
     if not planning.jours_intervention:
         detected_jours = extract_jours_intervention_from_demande(demande, planning)
@@ -2412,17 +2462,21 @@ def sync_all_active_subscriptions():
     Synchronizes all active subscriptions so that child demands due for
     today or tomorrow (J-1) or past are instantiated and visible on the dashboard.
     """
+    from django.utils import timezone
+    import logging
+    logger = logging.getLogger(__name__)
+
     active_abos = Demande.objects.filter(
         frequency=Demande.ABONNEMENT,
         parent_demande__isnull=True
-    ).exclude(statut__in=[Demande.ANNULE, Demande.TERMINE])
+    ).exclude(statut__in=[Demande.ANNULE, Demande.TERMINE, Demande.EN_ATTENTE])
     
     for abo in active_abos:
         try:
             planning = getattr(abo, 'planning', None)
             if not planning:
-                start_d = abo.date_intervention or datetime.date.today()
-                jours = abo.formulaire_data.get('jours_intervention') if isinstance(abo.formulaire_data, dict) else []
+                start_d = abo.date_intervention or timezone.localdate()
+                jours = extract_jours_intervention_from_demande(abo)
                 if not jours:
                     jours = ['lundi', 'jeudi']
                 planning = SubscriptionPlanning.objects.create(
@@ -2432,8 +2486,8 @@ def sync_all_active_subscriptions():
                     statut='en_cours'
                 )
             sync_subscription_child_demands(abo, planning)
-        except Exception:
-            pass
+        except Exception as e:
+            logger.error(f"Erreur lors de la synchronisation de l'abonnement #{abo.id}: {e}", exc_info=True)
 
 
 class FeteReligieusePermission(IsAuthenticated):

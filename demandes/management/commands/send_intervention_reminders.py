@@ -109,7 +109,8 @@ class Command(BaseCommand):
     help = "Envoie des rappels automatiques d'intervention 24h avant aux clients (WhatsApp) et à l'équipe Opérations (in-app)"
 
     def handle(self, *args, **options):
-        today = datetime.date.today()
+        from django.utils import timezone
+        today = timezone.localdate()
         tomorrow = today + datetime.timedelta(days=1)
         tomorrow_str = tomorrow.isoformat()
         
