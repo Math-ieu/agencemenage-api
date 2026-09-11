@@ -414,6 +414,19 @@ class DemandeViewSet(viewsets.ModelViewSet):
             demande.client.assigned_commercial = demande.assigned_to
             demande.client.save(update_fields=['assigned_commercial'])
 
+        if demande.mode_paiement:
+            init_statut_ui, init_statut_db = Demande.get_initial_statut_for_mode(demande.mode_paiement)
+            current_ui = (demande.formulaire_data or {}).get('facturation', {}).get('statut_paiement_ui')
+            if not current_ui or current_ui in ['non_confirme', 'Non confirmé']:
+                if not isinstance(demande.formulaire_data, dict):
+                    demande.formulaire_data = {}
+                if 'facturation' not in demande.formulaire_data:
+                    demande.formulaire_data['facturation'] = {}
+                demande.formulaire_data['facturation']['statut_paiement_ui'] = init_statut_ui
+                demande.formulaire_data['statut_paiement_ui'] = init_statut_ui
+                demande.statut_paiement = init_statut_db
+                demande.save(update_fields=['formulaire_data', 'statut_paiement'])
+
         # Synchronisation immédiate des interventions de l'abonnement lors de la validation
         if demande.frequency == Demande.ABONNEMENT and demande.parent_demande is None:
             from django.utils import timezone
@@ -2259,11 +2272,24 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
     agency_share = max(0.0, round(session_price - total_parts_amt, 2))
 
     parent_fact = parent_demande.formulaire_data.get('facturation', {}) if isinstance(parent_demande.formulaire_data, dict) else {}
-    parent_is_paid = (parent_demande.statut_paiement in [Demande.INTEGRAL, Demande.PAYE, 'integral', 'paye']) or (parent_fact.get('statut_facturation') == 'Payé')
-    
-    default_statut_ui = 'agence_payee_client' if parent_is_paid else 'non_confirme'
-    default_statut_paiement = Demande.PARTIEL if parent_is_paid else Demande.NON_PAYE
-    default_encaisse_par = 'agence' if parent_is_paid else ''
+    mode_to_use = parent_demande.mode_paiement or parent_fact.get('mode_paiement') or Demande.VIREMENT_AG
+    default_statut_ui, default_statut_paiement = Demande.get_initial_statut_for_mode(mode_to_use)
+    default_encaisse_par = 'profil' if default_statut_ui == 'profil_paye_client' else 'agence'
+
+    # Calcul spécifique des montants pour Virement / Espèces
+    child_vir = None
+    child_esp = None
+    child_doit_agence = 0
+    child_agence_doit = 0
+    if mode_to_use == Demande.VIREMENT_ESPECES:
+        ratio = (session_price / total_price) if total_price > 0 else 1.0
+        p_vir = float(parent_fact.get('montant_virement') or parent_demande.avance_paiement or 0)
+        child_vir = round(p_vir * ratio, 2)
+        child_esp = max(0.0, round(session_price - child_vir, 2))
+        if child_esp > total_parts_amt:
+            child_doit_agence = round(child_esp - total_parts_amt, 2)
+        elif child_esp < total_parts_amt:
+            child_agence_doit = round(total_parts_amt - child_esp, 2)
 
     new_formulaire_data['duree_heures'] = nb_h_val
     new_formulaire_data['nb_heures'] = nb_h_val
@@ -2282,19 +2308,24 @@ def clone_demand_for_date_time(parent_demande, date_val, time_val):
         'montant_ht': session_price_ht,
         'tva_active': tva_active,
         'montant_ttc': session_price,
-        'montant_verse': session_price if parent_is_paid else 0,
+        'montant_verse': child_vir if mode_to_use == Demande.VIREMENT_ESPECES else (session_price if default_statut_ui == 'agence_payee_client' else 0),
+        'montant_virement': child_vir if mode_to_use == Demande.VIREMENT_ESPECES else None,
+        'montant_especes': child_esp if mode_to_use == Demande.VIREMENT_ESPECES else None,
         'facturation_annulee': False,
         'statut_paiement_ui': default_statut_ui,
-        'mode_paiement': parent_demande.mode_paiement,
+        'mode_paiement': mode_to_use,
         'encaisse_par': default_encaisse_par,
         'part_agence': agency_share,
         'parts_repartition': child_parts,
-        'montant_agence_doit_profil': total_parts_amt if parent_is_paid else 0,
-        'montant_profil_doit_agence': 0,
+        'montant_agence_doit_profil': child_agence_doit if mode_to_use == Demande.VIREMENT_ESPECES else (total_parts_amt if default_statut_ui == 'agence_payee_client' else 0),
+        'montant_profil_doit_agence': child_doit_agence if mode_to_use == Demande.VIREMENT_ESPECES else (agency_share if default_statut_ui == 'profil_paye_client' else 0),
     }
     new_formulaire_data['statut_paiement_ui'] = default_statut_ui
     new_formulaire_data['part_agence'] = agency_share
     new_formulaire_data['parts_repartition'] = child_parts
+    if mode_to_use == Demande.VIREMENT_ESPECES:
+        new_formulaire_data['montant_virement'] = child_vir
+        new_formulaire_data['montant_especes'] = child_esp
     
     initial_statut = Demande.ENCOURS
     initial_statut_paiement = default_statut_paiement

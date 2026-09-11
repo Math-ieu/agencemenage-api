@@ -407,14 +407,17 @@ class Command(BaseCommand):
                     new_formulaire_data['heure'] = heure_debut_obj.strftime('%H:%M') if heure_debut_obj else ''
                     new_formulaire_data['montant'] = session_price
                     new_formulaire_data['total'] = session_price
+                    init_statut_ui, init_statut_db = Demande.get_initial_statut_for_mode(demande.mode_paiement)
+                    new_formulaire_data['statut_paiement_ui'] = init_statut_ui
                     new_formulaire_data['facturation'] = {
                         'montant_ht': session_price_ht,
                         'tva_active': tva_active,
                         'montant_ttc': session_price,
-                        'montant_verse': 0,
+                        'montant_verse': session_price if init_statut_ui == 'agence_payee_client' else 0,
                         'facturation_annulee': False,
-                        'statut_paiement_ui': 'non_confirme',
+                        'statut_paiement_ui': init_statut_ui,
                         'mode_paiement': demande.mode_paiement,
+                        'encaisse_par': 'profil' if init_statut_ui == 'profil_paye_client' else 'agence',
                         'part_agence': 0,
                         'parts_repartition': [],
                     }
@@ -433,7 +436,7 @@ class Command(BaseCommand):
                         prix=Decimal(str(session_price)),
                         part_agence=Decimal('0'),
                         mode_paiement=demande.mode_paiement,
-                        statut_paiement=Demande.NON_PAYE,
+                        statut_paiement=init_statut_db,
                         note_commercial=demande.note_commercial,
                         note_operationnel=demande.note_operationnel,
                         preference_horaire=demande.preference_horaire,

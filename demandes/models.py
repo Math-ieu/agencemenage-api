@@ -69,6 +69,8 @@ class Demande(models.Model):
     ]
 
     # Modes de paiement
+    VIREMENT_AG = 'virement_ag'
+    VIREMENT_COM = 'virement_com'
     VIREMENT = 'virement'
     CHEQUE = 'cheque'
     AGENCE = 'agence'
@@ -77,14 +79,37 @@ class Demande(models.Model):
     CARTE = 'carte'
     VIREMENT_ESPECES = 'virement_especes'
     PAIEMENT_CHOICES = [
-        (VIREMENT, 'Par virement'),
+        (VIREMENT_AG, 'Virement Ag'),
+        (VIREMENT_COM, 'Virement Com'),
+        (VIREMENT_ESPECES, 'Virement / Espèces'),
+        (ESPECES, 'Espèces'),
+        (CARTE, 'Carte bancaire'),
+        (VIREMENT, 'Par virement (Ancien)'),
         (CHEQUE, 'Par chèque'),
-        (ESPECES, 'En espèces'),
-        (CARTE, 'Par carte bancaire (solution de paiement en ligne)'),
-        (VIREMENT_ESPECES, 'Virement / Espèce'),
         (AGENCE, 'À l\'agence'),
         (SUR_PLACE, 'Sur place'),
     ]
+
+    @classmethod
+    def get_initial_statut_for_mode(cls, mode_paiement):
+        """
+        Retourne (statut_paiement_ui, statut_paiement_db) selon la matrice de correspondance métier :
+        - Espèces -> Profil payé / Client ('profil_paye_client', PARTIEL)
+        - Virement / Espèces -> Paiement partiel ('paiement_partiel', PARTIEL)
+        - Virement Ag -> Agence payé / Client ('agence_payee_client', PARTIEL)
+        - Virement Com -> Commercial payé / Client ('commercial_paye_client', PARTIEL)
+        - Carte bancaire -> Agence payé / Client ('agence_payee_client', PARTIEL)
+        """
+        mode = (mode_paiement or '').strip().lower()
+        if mode in [cls.ESPECES, 'espece', 'espèces']:
+            return 'profil_paye_client', cls.PARTIEL
+        elif mode in [cls.VIREMENT_ESPECES, 'virement_especes', 'virement / espèce', 'virement / espèces']:
+            return 'paiement_partiel', cls.PARTIEL
+        elif mode in [cls.VIREMENT_AG, 'virement_ag', cls.VIREMENT, 'virement', cls.CARTE, 'carte', cls.CHEQUE, 'cheque', cls.AGENCE, 'agence']:
+            return 'agence_payee_client', cls.PARTIEL
+        elif mode in [cls.VIREMENT_COM, 'virement_com']:
+            return 'commercial_paye_client', cls.PARTIEL
+        return 'non_confirme', cls.NON_PAYE
 
     NON_PAYE = 'non_paye'
     ACOMPTE = 'acompte'
