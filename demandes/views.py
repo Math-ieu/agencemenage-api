@@ -1,7 +1,7 @@
 from rest_framework import viewsets, status, filters
 from rest_framework.decorators import action
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated, AllowAny
+from rest_framework.permissions import IsAuthenticated, AllowAny, BasePermission
 from django_filters.rest_framework import DjangoFilterBackend
 from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404
@@ -1449,9 +1449,18 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 keys = ['lundi', 'mardi', 'mercredi', 'jeudi', 'vendredi', 'samedi', 'dimanche']
                 return keys[day_idx]
 
+            def is_monthly_frequency_helper(flabel):
+                if not flabel:
+                    return False
+                val = str(flabel).lower().replace(' ', '').replace('_', '')
+                return 'mois' in val or 'month' in val or 'bihebdomadaire' in val
+
             def get_frequency_count_helper(flabel):
                 if not flabel:
                     return 1
+                if is_monthly_frequency_helper(flabel):
+                    val = str(flabel).lower().replace(' ', '').replace('_', '')
+                    return 2 if ('2' in val or 'bi' in val or '15' in val) else 1
                 import re
                 match = re.match(r'^(\d+)/sem', flabel, re.IGNORECASE)
                 if match:
@@ -1500,7 +1509,10 @@ class DemandeViewSet(viewsets.ModelViewSet):
                     return []
                 start_dayk = get_day_of_week_key_helper(start_date.weekday())
                 fcount = get_frequency_count_helper(frequency_label)
+                is_monthly = is_monthly_frequency_helper(frequency_label)
                 selected_days = get_selected_days_for_frequency_helper(jours_intervention, fcount, start_dayk)
+                if is_monthly:
+                    selected_days = selected_days[:1]
                 
                 duration = nb_heures or 2
                 start_hour = heure_debut or '09:00'
@@ -1513,6 +1525,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 import random
                 import string
                 
+                monthly_passages_placed = 0
                 while current_monday <= end_date:
                     week_debut_str = current_monday.isoformat()
                     sunday = current_monday + datetime.timedelta(days=6)
@@ -1526,7 +1539,25 @@ class DemandeViewSet(viewsets.ModelViewSet):
                         day_date_str = day_date.isoformat()
                         
                         is_parent_day = parent_demande_id and day_date_str == start_date.isoformat()
-                        is_selected = is_parent_day or (day_key in selected_days and start_date <= day_date <= end_date)
+                        is_selected = False
+                        if is_parent_day:
+                            is_selected = True
+                            if is_monthly:
+                                monthly_passages_placed += 1
+                        elif day_key in selected_days and start_date <= day_date <= end_date:
+                            if is_monthly:
+                                if fcount == 1:
+                                    if monthly_passages_placed == 0:
+                                        is_selected = True
+                                        monthly_passages_placed += 1
+                                else:
+                                    # 2 fois par mois : espacé de 14 jours
+                                    week_no = (day_date - start_date).days // 7
+                                    if week_no % 2 == 0 and monthly_passages_placed < 2:
+                                        is_selected = True
+                                        monthly_passages_placed += 1
+                            else:
+                                is_selected = True
                         
                         jours_dict[day_key] = {
                             'selected': is_selected,
@@ -2006,9 +2037,25 @@ def calculate_end_time_py(s_str, dur_h):
     end_h = end_h % 24
     return f"{end_h:02d}:{end_m:02d}"
 
+def is_monthly_frequency_py(flabel):
+    if not flabel:
+        return False
+    val = str(flabel).lower().replace(' ', '').replace('_', '')
+    return 'mois' in val or 'month' in val or 'bihebdomadaire' in val
+
+def get_monthly_frequency_count_py(flabel):
+    if not flabel:
+        return 1
+    val = str(flabel).lower().replace(' ', '').replace('_', '')
+    if '2' in val or 'bi' in val or '15' in val:
+        return 2
+    return 1
+
 def get_frequency_count_py(flabel):
     if not flabel:
         return 1
+    if is_monthly_frequency_py(flabel):
+        return get_monthly_frequency_count_py(flabel)
     import re
     match = re.match(r'^(\d+)/sem', str(flabel), re.IGNORECASE)
     if match:
@@ -2081,12 +2128,20 @@ def extract_jours_intervention_from_demande(demande, planning=None):
                         if clean in days_order and clean not in found:
                             found.append(clean)
 
+    freq_label = getattr(demande, 'frequency_label', None)
+    if not freq_label and isinstance(getattr(demande, 'formulaire_data', None), dict):
+        freq_label = demande.formulaire_data.get('frequence')
+    if is_monthly_frequency_py(freq_label):
+        found = found[:1]
+
     if not found:
-        fcount = get_frequency_count_py(demande.frequency_label)
+        fcount = get_frequency_count_py(freq_label)
         start_day_key = 'lundi'
         if demande.date_intervention:
             start_day_key = days_order[demande.date_intervention.weekday()]
         found = get_selected_days_for_frequency_py([], fcount, start_day_key)
+        if is_monthly_frequency_py(freq_label):
+            found = found[:1]
 
     return found
 
@@ -2142,6 +2197,14 @@ def build_default_semaines_for_planning(demande, planning=None, start_date=None,
     import random
     import string
 
+    freq_label = getattr(demande, 'frequency_label', None)
+    if not freq_label and isinstance(getattr(demande, 'formulaire_data', None), dict):
+        freq_label = demande.formulaire_data.get('frequence')
+
+    is_monthly = is_monthly_frequency_py(freq_label)
+    monthly_count = get_monthly_frequency_count_py(freq_label) if is_monthly else 0
+    monthly_passages_placed = 0
+
     while current_monday <= end_date:
         week_debut_str = current_monday.isoformat()
         sunday = current_monday + datetime.timedelta(days=6)
@@ -2152,7 +2215,21 @@ def build_default_semaines_for_planning(demande, planning=None, start_date=None,
             day_date = current_monday + datetime.timedelta(days=offset)
             day_date_str = day_date.isoformat()
 
-            is_selected = (day_key in jours_intervention and start_date <= day_date <= end_date)
+            is_selected = False
+            if day_key in jours_intervention and start_date <= day_date <= end_date:
+                if is_monthly:
+                    if monthly_count == 1:
+                        if monthly_passages_placed == 0:
+                            is_selected = True
+                            monthly_passages_placed += 1
+                    else:
+                        # 2 fois par mois : espacé de 14 jours
+                        week_no = (day_date - start_date).days // 7
+                        if week_no % 2 == 0 and monthly_passages_placed < 2:
+                            is_selected = True
+                            monthly_passages_placed += 1
+                else:
+                    is_selected = True
 
             jours_dict[day_key] = {
                 'selected': is_selected,
@@ -2521,15 +2598,15 @@ def sync_all_active_subscriptions():
             logger.error(f"Erreur lors de la synchronisation de l'abonnement #{abo.id}: {e}", exc_info=True)
 
 
-class FeteReligieusePermission(IsAuthenticated):
-    """Lecture pour tout utilisateur authentifié (les fêtes servent aux calculs),
+class FeteReligieusePermission(BasePermission):
+    """Lecture publique pour le site web et les calculs tarifaires (SAFE_METHODS),
     écriture réservée à l'admin ou au rôle disposant de `parametres_globaux`."""
     def has_permission(self, request, view):
-        if not super().has_permission(request, view):
-            return False
         from rest_framework.permissions import SAFE_METHODS
         if request.method in SAFE_METHODS:
             return True
+        if not request.user or not request.user.is_authenticated:
+            return False
         user = request.user
         if getattr(user, 'role', None) == 'admin':
             return True

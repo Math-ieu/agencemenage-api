@@ -53,6 +53,8 @@ urlpatterns = [
     path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
     path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
     path('api/public/promos/validate/', PublicPromoCodeValidateView.as_view(), name='public_promos_validate'),
+    path('api/public/jours-feries/', FeteReligieuseViewSet.as_view({'get': 'list'}), name='public_jours_feries'),
+    path('api/public/jours-feries', FeteReligieuseViewSet.as_view({'get': 'list'}), name='public_jours_feries_no_slash'),
     path('api/public/site-config/', SiteConfigPublicView.as_view(), name='public_site_config'),
     path('api/public/site-config', SiteConfigPublicView.as_view(), name='public_site_config_no_slash'),
 
@@ -72,8 +74,9 @@ urlpatterns = [
     path('api/auth/forgot-password/', ForgotPasswordView.as_view(), name='forgot_password'),
     path('api/auth/reset-password/', ResetPasswordView.as_view(), name='reset_password'),
 
-    # Public media endpoint — serves files from S3 / Railway bucket
-    path('api/media/<path:file_path>/', MediaFileView.as_view(), name='media_file'),
+    # Public media endpoint — serves files from S3 / Railway bucket (supports with & without trailing slash)
+    path('api/media/<path:file_path>', MediaFileView.as_view(), name='media_file'),
+    path('api/media/<path:file_path>/', MediaFileView.as_view(), name='media_file_slash'),
 
 
     # OpenAPI docs

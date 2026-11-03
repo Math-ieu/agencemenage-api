@@ -716,6 +716,7 @@ class FeteReligieuse(models.Model):
     annee = models.IntegerField(verbose_name="Année")
     jours_avant = models.PositiveIntegerField(default=1, verbose_name="Jours suspendus avant")
     jours_apres = models.PositiveIntegerField(default=2, verbose_name="Jours suspendus après")
+    majoration_pourcentage = models.PositiveIntegerField(default=0, verbose_name="Majoration (%)", help_text="Pourcentage de majoration appliqué lors d'une réservation sur cette date")
     actif = models.BooleanField(default=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)

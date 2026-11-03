@@ -105,11 +105,13 @@ STATIC_ROOT = BASE_DIR / 'staticfiles'
 # ─── Storage Configuration (Railway Bucket / S3) ───────────────────────────
 AWS_ACCESS_KEY_ID = config('AWS_ACCESS_KEY_ID', default=None)
 AWS_SECRET_ACCESS_KEY = config('AWS_SECRET_ACCESS_KEY', default=None)
-AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=None)
-AWS_S3_ENDPOINT_URL = config('AWS_S3_ENDPOINT_URL', default=None) # ex: https://xxx.tigris.app
-AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default='us-east-1')
+AWS_STORAGE_BUCKET_NAME = config('AWS_STORAGE_BUCKET_NAME', default=config('AWS_S3_BUCKET_NAME', default=None))
+_raw_endpoint = config('AWS_S3_ENDPOINT_URL', default=config('AWS_ENDPOINT_URL', default=None))
+AWS_S3_ENDPOINT_URL = _raw_endpoint.rstrip('/') if _raw_endpoint else None
+AWS_S3_REGION_NAME = config('AWS_S3_REGION_NAME', default=config('AWS_DEFAULT_REGION', default='auto'))
 AWS_S3_FILE_OVERWRITE = False
-AWS_DEFAULT_ACL = 'public-read'
+# Tigris (Railway) ne supporte pas les ACLs d'objets (comme 'public-read')
+AWS_DEFAULT_ACL = None
 AWS_QUERYSTRING_AUTH = False
 AWS_S3_VERIFY = True
 

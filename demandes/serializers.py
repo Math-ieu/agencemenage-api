@@ -1566,5 +1566,6 @@ class FeteReligieuseSerializer(serializers.ModelSerializer):
         fields = [
             'id', 'type', 'type_display', 'date', 'annee',
             'jours_avant', 'jours_apres', 'actif',
+            'majoration_pourcentage',
             'debut_suspension', 'fin_suspension',
         ]
