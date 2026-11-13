@@ -1,16 +1,24 @@
+from datetime import datetime
 from django.core.management.base import BaseCommand
 from django.utils import timezone
-from datetime import timedelta
-from airbnb.models import CommandeAirbnb
-from clients.models import Client
+from airbnb.services.billing_engine import verifier_suspensions_et_relances
+
 
 class Command(BaseCommand):
-    help = "Vérifie les retards de paiement supérieurs à 4 jours et suspend automatiquement les comptes clients débiteurs."
+    help = "Envoie les rappels d'échéance (J-1) et suspend à J+1 les clients impayés (annulant leurs commandes planifiées)."
+
+    def add_arguments(self, parser):
+        parser.add_argument('--date', type=str, help="Date de contrôle (YYYY-MM-DD, défaut: aujourd'hui).")
 
     def handle(self, *args, **options):
-        today = timezone.localdate()
-        late_threshold = today - timedelta(days=4)
-
-        # Recherche des commandes ou factures en retard
-        self.stdout.write(f"Contrôle des comptes clients et des retards au {today} (seuil impayé : {late_threshold})...")
-        self.stdout.write(self.style.SUCCESS("Contrôle terminé : tous les comptes clients Airbnb sont conformes."))
+        today = (
+            datetime.strptime(options['date'], '%Y-%m-%d').date()
+            if options.get('date')
+            else timezone.localdate()
+        )
+        res = verifier_suspensions_et_relances(today=today)
+        self.stdout.write(
+            self.style.SUCCESS(
+                f"Contrôle au {today} : {res['reminders']} rappel(s) J-1, {res['suspended']} client(s) suspendu(s)."
+            )
+        )

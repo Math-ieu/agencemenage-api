@@ -383,11 +383,34 @@ class AppNotification(models.Model):
     TYPE_CHOICES = [
         ('rappel_intervention', 'Rappel intervention'),
         ('info', 'Information'),
+        ('airbnb_commande', 'Airbnb — Commande'),
+        ('airbnb_tdb', 'Airbnb — Tableau de bord'),
+        ('airbnb_ecart_linge', 'Airbnb — Écart linge'),
+        ('airbnb_incident', 'Airbnb — Incident / Objet trouvé'),
+        ('airbnb_facture', 'Airbnb — Facturation'),
+        ('airbnb_suspension', 'Airbnb — Suspension'),
+        ('airbnb_tarif', 'Airbnb — Grille tarifaire'),
+        ('airbnb_seuil', 'Airbnb — Seuil conciergerie'),
     ]
     type = models.CharField(max_length=50, choices=TYPE_CHOICES)
     title = models.CharField(max_length=255)
     message = models.TextField()
     demande = models.ForeignKey(Demande, on_delete=models.CASCADE, null=True, blank=True)
+    commande_airbnb = models.ForeignKey(
+        'airbnb.CommandeAirbnb',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='notifications',
+    )
+    target_user = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='app_notifications',
+    )
+    lien_url = models.CharField(max_length=255, blank=True, default='')
     is_read = models.BooleanField(default=False)
     target_roles = models.JSONField(default=list)  # ["operations", "admin"]
     created_at = models.DateTimeField(auto_now_add=True)

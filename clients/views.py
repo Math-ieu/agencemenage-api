@@ -15,6 +15,12 @@ class ClientViewSet(viewsets.ModelViewSet):
         user = self.request.user
         qs = super().get_queryset()
         if user and user.is_authenticated and user.role != 'admin':
+            if user.role == 'client_conciergerie':
+                if user.client_id:
+                    return qs.filter(id=user.client_id)
+                return qs.none()
+            if user.role == 'responsable_facturation':
+                return qs
             from accounts.models import RolePermission
             from accounts.permissions import map_role_to_db_key
             db_role = map_role_to_db_key(user.role)
@@ -49,6 +55,10 @@ class ClientViewSet(viewsets.ModelViewSet):
         return ClientSerializer
 
     def perform_destroy(self, instance):
+        if instance.biens_airbnb.exists() or instance.factures.exists():
+            instance.is_archived = True
+            instance.save(update_fields=['is_archived'])
+            return
         instance.demandes.all().delete()
         instance.is_archived = True
         instance.save(update_fields=['is_archived'])

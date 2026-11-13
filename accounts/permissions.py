@@ -1,4 +1,6 @@
+from django.utils import timezone
 from rest_framework import permissions
+
 
 def map_role_to_db_key(role):
     if not role:
@@ -18,6 +20,14 @@ def map_role_to_db_key(role):
         return 'Chargée des Opérations'
     if r in ['opérationnel', 'operationnel']:
         return 'Opérationnel'
+    if r in ['responsable facturation', 'responsable_facturation']:
+        return 'Responsable Facturation'
+    if r == 'runner':
+        return 'Runner'
+    if r in ['responsable linge', 'responsable_linge']:
+        return 'Responsable Linge'
+    if r in ['client conciergerie', 'client_conciergerie']:
+        return 'Client Conciergerie'
     return role
 
 
@@ -25,6 +35,43 @@ def is_exempt_from_ownership(user):
     if not user or not user.is_authenticated:
         return False
     return user.role in ['admin', 'moderateur', 'responsable_commercial', 'responsable_operations', 'charge_operations']
+
+
+AIRBNB_VIEWSETS = {
+    'AirbnbConfigViewSet',
+    'GrilleTarifaireVersionViewSet',
+    'BienViewSet',
+    'CommandeAirbnbViewSet',
+    'FiletLingeViewSet',
+    'ObservationLingeViewSet',
+    'SignalementCommandeViewSet',
+    'ObjetTrouveViewSet',
+    'JournalAuditAirbnbViewSet',
+    'FacturationAirbnbViewSet',
+    'AirbnbPhotoUploadView',
+}
+
+_AIRBNB_CONFIG_READ_ROLES = {
+    'moderateur', 'responsable_commercial', 'commercial',
+    'responsable_facturation', 'responsable_operations',
+    'charge_operations',
+}
+
+_AIRBNB_PHOTO_ROLES = {
+    'moderateur', 'responsable_commercial', 'commercial',
+    'responsable_facturation', 'responsable_operations',
+    'charge_operations', 'runner', 'responsable_linge',
+    'client_conciergerie',
+}
+
+_AIRBNB_AUDIT_READ_ROLES = {
+    'moderateur', 'responsable_commercial',
+    'responsable_facturation', 'responsable_operations',
+}
+
+AIRBNB_ONLY_ROLES = {
+    'client_conciergerie', 'runner', 'responsable_linge', 'responsable_facturation',
+}
 
 
 class RoleBasedPermission(permissions.BasePermission):
@@ -54,6 +101,15 @@ class RoleBasedPermission(permissions.BasePermission):
                 action = 'destroy'
                 
         view_name = view.__class__.__name__
+
+        # 1b. Cloisonnement strict des rôles purement Airbnb (aucun accès aux ViewSets classiques)
+        if role in AIRBNB_ONLY_ROLES:
+            if view_name in AIRBNB_VIEWSETS:
+                return self._has_airbnb_permission(request, view_name, action, role)
+            if view_name == 'AppNotificationViewSet':
+                return action in ['list', 'retrieve', 'update', 'partial_update']
+            if view_name not in ['ClientViewSet', 'FactureViewSet', 'PaiementViewSet']:
+                return False
 
         # Récupérer les permissions de la base de données
         from accounts.models import RolePermission
@@ -86,6 +142,12 @@ class RoleBasedPermission(permissions.BasePermission):
 
         # 3. Gestion des clients (ClientViewSet)
         if view_name == 'ClientViewSet':
+            if role in ['runner', 'responsable_linge']:
+                return False
+            if role == 'client_conciergerie':
+                return action in ['list', 'retrieve']
+            if role == 'responsable_facturation':
+                return action in ['list', 'retrieve', 'action_logs']
             if action == 'destroy':
                 return has_perm('delete_client')
             
@@ -211,8 +273,35 @@ class RoleBasedPermission(permissions.BasePermission):
 
         # 6. Gestion financière (FactureViewSet, PaiementViewSet, EntreeCaisseViewSet)
         if view_name in ['FactureViewSet', 'PaiementViewSet', 'EntreeCaisseViewSet']:
+            if role == 'client_conciergerie':
+                if view_name in ['FactureViewSet', 'PaiementViewSet']:
+                    return action in ['list', 'retrieve']
+                return False
+            if role in ['runner', 'responsable_linge', 'operationnel']:
+                return False
+            if role == 'responsable_facturation':
+                if view_name == 'FactureViewSet':
+                    if action == 'create':
+                        return request.data.get('source') == 'airbnb'
+                    return action != 'destroy'
+                if view_name == 'PaiementViewSet':
+                    if action == 'create':
+                        facture_id = request.data.get('facture')
+                        if facture_id:
+                            from finance.models import Facture
+                            return Facture.objects.filter(pk=facture_id, source='airbnb').exists()
+                        return True
+                    return action != 'destroy'
+            if view_name == 'FactureViewSet' and action == 'create' and request.data.get('source') == 'airbnb':
+                return role == 'responsable_facturation'
+            if view_name == 'PaiementViewSet' and action == 'create':
+                facture_id = request.data.get('facture')
+                if facture_id:
+                    from finance.models import Facture
+                    if Facture.objects.filter(pk=facture_id, source='airbnb').exists():
+                        return role == 'responsable_facturation'
             if action in ['refund', 'cancel', 'annuler', 'remise']:
-                return has_perm('mouvements_caisse')
+                return has_perm('mouvements_caisse') or (role == 'responsable_facturation' and view_name in ['FactureViewSet', 'PaiementViewSet'])
             if action in ['create', 'update', 'partial_update']:
                 return (
                     has_perm('modifier_facture') or 
@@ -269,7 +358,178 @@ class RoleBasedPermission(permissions.BasePermission):
             elif action in ['list', 'retrieve']:
                 return has_perm('consulter_marketing')
 
+        # 9. Module Airbnb / Conciergerie
+        if view_name in AIRBNB_VIEWSETS:
+            return self._has_airbnb_permission(request, view_name, action, role)
+
         return True
+
+    def _has_airbnb_permission(self, request, view_name, action, role):
+        """Contrôle strict des accès Airbnb selon la matrice Brief §2.1 & §2.2."""
+        is_safe = request.method in permissions.SAFE_METHODS
+
+        if view_name in ['AirbnbConfigViewSet', 'GrilleTarifaireVersionViewSet']:
+            if not is_safe or action not in ['list', 'retrieve', 'current', 'active']:
+                return False
+            return role in _AIRBNB_CONFIG_READ_ROLES
+
+        if view_name == 'AirbnbPhotoUploadView':
+            return role in _AIRBNB_PHOTO_ROLES
+
+        if view_name == 'JournalAuditAirbnbViewSet':
+            return is_safe and action in ['list', 'retrieve'] and role in _AIRBNB_AUDIT_READ_ROLES
+
+        if view_name == 'BienViewSet':
+            if role == 'responsable_linge':
+                return False
+            if role == 'runner':
+                return action in ['list', 'retrieve']
+            if role in ['client_conciergerie', 'commercial']:
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'desactiver', 'sync_ical', 'connecter_ical', 'retirer_ical', 'stats', 'generate_code_preview',
+                ]
+            if role in ['responsable_commercial', 'moderateur']:
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update', 'destroy',
+                    'activer', 'desactiver', 'sync_ical', 'connecter_ical', 'retirer_ical', 'stats', 'generate_code_preview',
+                ]
+            if role in ['responsable_facturation', 'responsable_operations', 'charge_operations', 'operationnel']:
+                return action in ['list', 'retrieve', 'stats']
+            return False
+
+        if view_name == 'CommandeAirbnbViewSet':
+            if role == 'responsable_linge':
+                return False
+            if role == 'runner':
+                return action in ['list', 'retrieve', 'mission_pdf_data', 'exporter_fiche_mission_pdf']
+            if role == 'client_conciergerie':
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'calculate_price', 'planning_grid', 'stats',
+                    'confirmer', 'confirm', 'confirmer_proposition', 'rejeter_proposition',
+                    'annuler', 'cancel',
+                    'accord_remise_en_etat', 'accorder_remise_en_etat',
+                ]
+            if role == 'commercial':
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'calculate_price', 'planning_grid', 'stats', 'tdb_interventions',
+                    'mission_pdf_data', 'exporter_fiche_mission_pdf',
+                    'confirmer', 'confirm', 'confirmer_proposition', 'rejeter_proposition',
+                    'annuler', 'cancel',
+                    'transmettre_remise_en_etat', 'accord_remise_en_etat', 'accorder_remise_en_etat',
+                ]
+            if role in ['responsable_commercial', 'moderateur']:
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'calculate_price', 'planning_grid', 'stats', 'tdb_interventions',
+                    'mission_pdf_data', 'exporter_fiche_mission_pdf',
+                    'confirmer', 'confirm', 'confirmer_proposition', 'rejeter_proposition',
+                    'annuler', 'cancel', 'reactiver',
+                    'forcer_prix', 'force_price',
+                    'transmettre_remise_en_etat', 'accord_remise_en_etat', 'accorder_remise_en_etat',
+                ]
+            if role == 'responsable_facturation':
+                return action in ['list', 'retrieve', 'calculate_price', 'planning_grid', 'stats']
+            if role in ['responsable_operations', 'charge_operations']:
+                return action in [
+                    'list', 'retrieve', 'planning_grid', 'stats', 'tdb_interventions',
+                    'suggestions_intervenantes', 'mission_pdf_data', 'exporter_fiche_mission_pdf',
+                    'assigner', 'cloturer', 'remonter_tdb', 'demarrer', 'reactiver',
+                    'annuler', 'cancel', 'valider_remise_en_etat',
+                ]
+            if role == 'operationnel':
+                return action in ['list', 'retrieve', 'planning_grid', 'stats', 'tdb_interventions', 'mission_pdf_data']
+            return False
+
+        if view_name == 'FiletLingeViewSet':
+            if role == 'runner':
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'tournee_runner', 'compter_runner', 'confirmer_retrait_bureau',
+                    'contester_retrait_bureau', 'deposer',
+                ]
+            if role == 'responsable_linge':
+                return action in [
+                    'list', 'retrieve', 'update', 'partial_update',
+                    'figer_montant', 'recevoir_laverie', 'marquer_lavage',
+                    'marquer_pret', 'remettre_runner', 'arbitrer_ecart',
+                ]
+            if role in ['client_conciergerie', 'responsable_facturation']:
+                return action in ['list', 'retrieve']
+            if role == 'commercial':
+                return action in ['list', 'retrieve', 'arbitrer_ecart']
+            if role in ['responsable_commercial', 'moderateur', 'responsable_operations', 'charge_operations']:
+                return action in ['list', 'retrieve', 'tournee_runner', 'arbitrer_ecart']
+            return False
+
+        if view_name == 'ObservationLingeViewSet':
+            if role == 'responsable_linge':
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'activer_facturation', 'toggle_facturation',
+                ]
+            if role == 'responsable_facturation':
+                return action in ['list', 'retrieve', 'activer_facturation', 'toggle_facturation']
+            if role in ['commercial', 'responsable_commercial', 'moderateur']:
+                return action in ['list', 'retrieve', 'notifier_client', 'transmettre_client']
+            if role in ['responsable_operations', 'charge_operations', 'client_conciergerie', 'runner']:
+                return action in ['list', 'retrieve']
+            return False
+
+        if view_name == 'SignalementCommandeViewSet':
+            if role in ['responsable_operations', 'charge_operations']:
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'valider', 'arbitrer', 'clore',
+                ]
+            if role in ['commercial', 'responsable_commercial', 'moderateur']:
+                return action in [
+                    'list', 'retrieve', 'create', 'transmettre_client',
+                    'accord_client', 'arbitrer',
+                ]
+            if role == 'client_conciergerie':
+                return action in ['list', 'retrieve', 'repondre', 'accord', 'accord_client']
+            if role in ['responsable_facturation', 'operationnel']:
+                return action in ['list', 'retrieve']
+            return False
+
+        if view_name == 'ObjetTrouveViewSet':
+            if role == 'responsable_linge':
+                return False
+            if role == 'runner':
+                return action in ['list', 'retrieve', 'create']
+            if role == 'client_conciergerie':
+                return action in ['list', 'retrieve', 'indiquer_instruction', 'instruction']
+            if role == 'commercial':
+                return action in ['list', 'retrieve', 'create', 'notifier_client', 'informer_client']
+            if role in ['responsable_commercial', 'moderateur', 'responsable_operations', 'charge_operations']:
+                return action in [
+                    'list', 'retrieve', 'create', 'update', 'partial_update',
+                    'mettre_en_securite', 'notifier_client', 'informer_client', 'restituer',
+                ]
+            if role in ['responsable_facturation', 'operationnel']:
+                return action in ['list', 'retrieve']
+            return False
+
+        if view_name == 'FacturationAirbnbViewSet':
+            if role == 'responsable_facturation':
+                return action != 'destroy'
+            if role == 'responsable_commercial':
+                return action in [
+                    'list', 'retrieve', 'resume', 'stats', 'calendrier_facturation',
+                    'exporter_facture_pdf', 'annuler_bascule_mensuelle', 'annuler_bascule',
+                ]
+            if role in ['responsable_operations', 'charge_operations']:
+                return action in ['lancer_cron']
+            if role in ['commercial', 'moderateur']:
+                return action in ['list', 'retrieve', 'resume', 'stats', 'calendrier_facturation', 'exporter_facture_pdf']
+            if role == 'client_conciergerie':
+                return action in ['list', 'retrieve', 'resume', 'stats', 'calendrier_facturation', 'exporter_facture_pdf', 'declarer_virement']
+            return False
+
+        return False
 
     def has_object_permission(self, request, view, obj):
         user = request.user
@@ -281,6 +541,7 @@ class RoleBasedPermission(permissions.BasePermission):
             return True
             
         view_name = view.__class__.__name__
+        action = getattr(view, 'action', None)
 
         # Fetch user permissions
         from accounts.models import RolePermission
@@ -385,6 +646,10 @@ class RoleBasedPermission(permissions.BasePermission):
             
         # 2. ClientViewSet
         if view_name == 'ClientViewSet':
+            if role == 'client_conciergerie':
+                return request.method in permissions.SAFE_METHODS and bool(user.client_id) and obj.id == user.client_id
+            if role == 'responsable_facturation':
+                return request.method in permissions.SAFE_METHODS
             if is_exempt:
                 return True
             if request.method in ['GET', 'HEAD', 'OPTIONS']:
@@ -417,6 +682,22 @@ class RoleBasedPermission(permissions.BasePermission):
             
         # 4. FactureViewSet
         if view_name == 'FactureViewSet':
+            if getattr(obj, 'source', 'classique') == 'airbnb':
+                if role == 'responsable_facturation':
+                    return action != 'destroy' and request.method != 'DELETE'
+                if role == 'client_conciergerie':
+                    return request.method in permissions.SAFE_METHODS and bool(user.client_id) and obj.client_id == user.client_id
+                if role == 'responsable_commercial':
+                    return request.method in permissions.SAFE_METHODS
+                if role == 'commercial':
+                    return (
+                        request.method in permissions.SAFE_METHODS
+                        and bool(obj.client_id)
+                        and obj.client.assigned_commercial_id == user.id
+                    )
+                return False
+            if role == 'responsable_facturation':
+                return False
             if is_exempt:
                 return True
             if request.method in ['GET', 'HEAD', 'OPTIONS']:
@@ -438,6 +719,23 @@ class RoleBasedPermission(permissions.BasePermission):
  
         # 5. PaiementViewSet
         if view_name == 'PaiementViewSet':
+            facture = getattr(obj, 'facture', None)
+            if facture and getattr(facture, 'source', 'classique') == 'airbnb':
+                if role == 'responsable_facturation':
+                    return action != 'destroy' and request.method != 'DELETE'
+                if role == 'client_conciergerie':
+                    return request.method in permissions.SAFE_METHODS and bool(user.client_id) and facture.client_id == user.client_id
+                if role == 'responsable_commercial':
+                    return request.method in permissions.SAFE_METHODS
+                if role == 'commercial':
+                    return (
+                        request.method in permissions.SAFE_METHODS
+                        and bool(facture.client_id)
+                        and facture.client.assigned_commercial_id == user.id
+                    )
+                return False
+            if role == 'responsable_facturation':
+                return False
             if is_exempt:
                 return True
             if request.method in ['GET', 'HEAD', 'OPTIONS']:
@@ -447,7 +745,6 @@ class RoleBasedPermission(permissions.BasePermission):
                 ])
                 if has_consulter_factures:
                     return True
-            facture = obj.facture
             if not facture or not facture.demande:
                 return False
             demande = facture.demande
@@ -489,4 +786,121 @@ class RoleBasedPermission(permissions.BasePermission):
                     return True
             return False
  
+        # 7. Module Airbnb / Conciergerie
+        if view_name in AIRBNB_VIEWSETS:
+            return self._has_airbnb_object_permission(request, view_name, action, role, user, obj)
+
+        if view_name == 'AppNotificationViewSet' and role in AIRBNB_ONLY_ROLES:
+            if getattr(obj, 'target_user_id', None) == user.id:
+                return True
+            target_roles = [str(r).lower() for r in (getattr(obj, 'target_roles', None) or [])]
+            return str(role).lower() in target_roles
+
+        if role in AIRBNB_ONLY_ROLES and view_name not in ['ClientViewSet', 'FactureViewSet', 'PaiementViewSet']:
+            return False
+
         return True
+
+    def _has_airbnb_object_permission(self, request, view_name, action, role, user, obj):
+        is_safe = request.method in permissions.SAFE_METHODS
+
+        if view_name in ['AirbnbConfigViewSet', 'GrilleTarifaireVersionViewSet']:
+            return is_safe and role in _AIRBNB_CONFIG_READ_ROLES
+
+        if view_name == 'JournalAuditAirbnbViewSet':
+            return is_safe and role in _AIRBNB_AUDIT_READ_ROLES
+
+        if view_name == 'BienViewSet':
+            if role == 'responsable_linge':
+                return False
+            if role == 'client_conciergerie':
+                return bool(user.client_id) and obj.client_id == user.client_id and action not in ['destroy', 'activer']
+            if role == 'commercial':
+                return bool(obj.client) and obj.client.assigned_commercial_id == user.id and action not in ['destroy', 'activer']
+            if role == 'runner':
+                return is_safe and obj.commandes.filter(runner=user, date_prestation=timezone.localdate()).exists()
+            if role in ['responsable_facturation', 'responsable_operations', 'charge_operations', 'operationnel']:
+                return is_safe
+            return role in ['responsable_commercial', 'moderateur']
+
+        if view_name == 'CommandeAirbnbViewSet':
+            if role == 'responsable_linge':
+                return False
+            if role == 'client_conciergerie':
+                return bool(user.client_id) and obj.bien.client_id == user.client_id
+            if role == 'commercial':
+                return bool(obj.bien and obj.bien.client) and obj.bien.client.assigned_commercial_id == user.id
+            if role == 'runner':
+                return is_safe and obj.runner_id == user.id and obj.date_prestation == timezone.localdate()
+            if role in ['responsable_facturation', 'operationnel']:
+                return is_safe
+            return role in ['responsable_commercial', 'moderateur', 'responsable_operations', 'charge_operations']
+
+        if view_name == 'FiletLingeViewSet':
+            if role == 'client_conciergerie':
+                return is_safe and bool(user.client_id) and obj.bien.client_id == user.client_id
+            if role == 'commercial':
+                return bool(obj.bien and obj.bien.client) and obj.bien.client.assigned_commercial_id == user.id
+            if role == 'runner':
+                return (
+                    (obj.commande_ramassage and obj.commande_ramassage.runner_id == user.id)
+                    or (obj.commande_depot and obj.commande_depot.runner_id == user.id)
+                )
+            if role == 'responsable_facturation':
+                return is_safe
+            return role in ['responsable_linge', 'responsable_commercial', 'moderateur', 'responsable_operations', 'charge_operations']
+
+        if view_name == 'ObservationLingeViewSet':
+            if role == 'client_conciergerie':
+                return is_safe and bool(user.client_id) and obj.filet.bien.client_id == user.client_id
+            if role == 'commercial':
+                return bool(obj.filet and obj.filet.bien and obj.filet.bien.client) and obj.filet.bien.client.assigned_commercial_id == user.id
+            if role == 'runner':
+                return is_safe and (
+                    (obj.filet.commande_ramassage and obj.filet.commande_ramassage.runner_id == user.id)
+                    or (obj.filet.commande_depot and obj.filet.commande_depot.runner_id == user.id)
+                )
+            return role in ['responsable_linge', 'responsable_facturation', 'responsable_commercial', 'moderateur', 'responsable_operations', 'charge_operations']
+
+        if view_name == 'SignalementCommandeViewSet':
+            if role == 'client_conciergerie':
+                return bool(user.client_id) and obj.commande.bien.client_id == user.client_id
+            if role == 'commercial':
+                return bool(obj.commande and obj.commande.bien and obj.commande.bien.client) and obj.commande.bien.client.assigned_commercial_id == user.id
+            if role in ['responsable_facturation', 'operationnel']:
+                return is_safe
+            return role in ['responsable_operations', 'charge_operations', 'responsable_commercial', 'moderateur']
+
+        if view_name == 'ObjetTrouveViewSet':
+            if role == 'responsable_linge':
+                return False
+            if role == 'client_conciergerie':
+                return bool(user.client_id) and obj.bien.client_id == user.client_id
+            if role == 'commercial':
+                return bool(obj.bien and obj.bien.client) and obj.bien.client.assigned_commercial_id == user.id
+            if role == 'runner':
+                return bool(obj.commande) and obj.commande.runner_id == user.id
+            if role in ['responsable_facturation', 'operationnel']:
+                return is_safe
+            return role in ['responsable_commercial', 'moderateur', 'responsable_operations', 'charge_operations']
+
+        if view_name == 'FacturationAirbnbViewSet':
+            obj_client_id = obj.client_id if hasattr(obj, 'client_id') else getattr(obj, 'id', None)
+            if role == 'client_conciergerie':
+                return bool(user.client_id) and obj_client_id == user.client_id
+            if role == 'commercial':
+                assigned_id = (
+                    obj.client.assigned_commercial_id
+                    if hasattr(obj, 'client') and obj.client
+                    else getattr(obj, 'assigned_commercial_id', None)
+                )
+                return is_safe and assigned_id == user.id
+            if role == 'responsable_facturation':
+                return action != 'destroy' and request.method != 'DELETE'
+            if role == 'responsable_commercial':
+                return is_safe or action in ['annuler_bascule_mensuelle', 'annuler_bascule']
+            if role == 'moderateur':
+                return is_safe
+            return False
+
+        return False

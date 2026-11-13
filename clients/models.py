@@ -1,5 +1,8 @@
+import calendar
+from datetime import date
 from django.db import models
 from django.conf import settings
+from django.utils import timezone
 
 
 class Client(models.Model):
@@ -46,10 +49,73 @@ class Client(models.Model):
     )
     phone_history = models.JSONField(default=list, blank=True, verbose_name="Historique des numéros")
 
+    # Champs spécifiques module Airbnb / Conciergerie
+    TYPE_CLIENT_AIRBNB_CHOICES = [
+        ('conciergerie', 'Conciergerie'),
+        ('particulier', 'Particulier'),
+        ('agence', 'Agence'),
+        ('autre', 'Autre'),
+    ]
+    MODE_PAIEMENT_AIRBNB_CHOICES = [
+        ('passage', 'Après chaque passage'),
+        ('mensuel', 'Mensuel groupé'),
+    ]
+    STATUT_AIRBNB_CHOICES = [
+        ('actif', 'Actif'),
+        ('suspendu', 'Suspendu'),
+    ]
+
+    trigramme = models.CharField(max_length=5, unique=True, null=True, blank=True, db_index=True)
+    type_client_airbnb = models.CharField(
+        max_length=30,
+        choices=TYPE_CLIENT_AIRBNB_CHOICES,
+        default='conciergerie',
+        blank=True,
+    )
+    mode_paiement_airbnb = models.CharField(
+        max_length=20,
+        choices=MODE_PAIEMENT_AIRBNB_CHOICES,
+        default='passage',
+    )
+    date_demarrage_airbnb = models.DateField(null=True, blank=True)
+    probatoire_jusqu_au = models.DateField(null=True, blank=True)
+    probatoire_bascule_annulee = models.BooleanField(default=False)
+    statut_airbnb = models.CharField(
+        max_length=20,
+        choices=STATUT_AIRBNB_CHOICES,
+        default='actif',
+        db_index=True,
+    )
+    eligible_conciergerie = models.BooleanField(default=False)
+    derniere_verification_conciergerie = models.DateField(null=True, blank=True)
+    reclassement_preavis_envoye_le = models.DateField(null=True, blank=True)
+    contrat_signe_airbnb = models.BooleanField(default=False)
+    contrat_signe_date_airbnb = models.DateField(null=True, blank=True)
+    contrat_signe_url_airbnb = models.URLField(max_length=500, blank=True, default='')
+
     class Meta:
         verbose_name = 'Client'
         verbose_name_plural = 'Clients'
         ordering = ['-created_at']
+
+    def save(self, *args, **kwargs):
+        if self.trigramme is not None:
+            cleaned = self.trigramme.strip().upper()
+            self.trigramme = cleaned if cleaned else None
+        if (
+            self.mode_paiement_airbnb == 'mensuel'
+            and not self.probatoire_bascule_annulee
+            and self.probatoire_jusqu_au is None
+        ):
+            if self.date_demarrage_airbnb is None:
+                self.date_demarrage_airbnb = timezone.localdate()
+            d = self.date_demarrage_airbnb
+            month_idx = d.month - 1 + 2
+            year = d.year + month_idx // 12
+            month = month_idx % 12 + 1
+            last_day = calendar.monthrange(year, month)[1]
+            self.probatoire_jusqu_au = date(year, month, min(d.day, last_day))
+        super().save(*args, **kwargs)
 
     def __str__(self):
         if self.segment == self.ENTREPRISE:

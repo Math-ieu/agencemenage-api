@@ -115,7 +115,12 @@ def send_whatsapp_alert_to_backoffice(demande, start_time, end_dt, duration_hour
     backoffice_users = User.objects.filter(
         is_active=True
     ).exclude(
-        role=User.CLIENT_CONCIERGERIE
+        role__in=[
+            User.CLIENT_CONCIERGERIE,
+            User.RUNNER,
+            User.RESPONSABLE_LINGE,
+            User.RESPONSABLE_FACTURATION,
+        ]
     ).exclude(
         phone__isnull=True
     ).exclude(

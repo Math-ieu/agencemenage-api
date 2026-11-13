@@ -3,19 +3,36 @@ from .models import User
 
 
 class UserSerializer(serializers.ModelSerializer):
+    client_name = serializers.SerializerMethodField()
+
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'is_active', 'full_name', 'created_at', 'phone', 'city']
-        read_only_fields = ['created_at', 'full_name']
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name', 'role',
+            'client', 'client_name', 'is_active', 'full_name', 'created_at',
+            'phone', 'city'
+        ]
+        read_only_fields = ['created_at', 'full_name', 'client_name']
+
+    def get_client_name(self, obj):
+        return obj.client.display_name if obj.client else None
 
 
 class UserCreateSerializer(serializers.ModelSerializer):
     password = serializers.CharField(write_only=True, min_length=8)
     username = serializers.CharField(required=False, allow_blank=True)
+    client_name = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['id', 'username', 'email', 'first_name', 'last_name', 'role', 'password', 'phone', 'city']
+        fields = [
+            'id', 'username', 'email', 'first_name', 'last_name', 'role',
+            'client', 'client_name', 'password', 'phone', 'city'
+        ]
+        read_only_fields = ['client_name']
+
+    def get_client_name(self, obj):
+        return obj.client.display_name if obj.client else None
 
     def create(self, validated_data):
         password = validated_data.pop('password')

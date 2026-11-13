@@ -2,6 +2,7 @@ from rest_framework import viewsets, filters
 from rest_framework.parsers import JSONParser, MultiPartParser, FormParser
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.permissions import IsAuthenticated
+from accounts.permissions import RoleBasedPermission
 from .models import Mission
 from .serializers import MissionSerializer
 from .filters import MissionFilter
@@ -11,6 +12,7 @@ from demandes.models import AuditLog
 class MissionViewSet(viewsets.ModelViewSet):
     queryset = Mission.objects.select_related('demande', 'agent').all()
     serializer_class = MissionSerializer
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_class = MissionFilter
     ordering = ['-created_at']

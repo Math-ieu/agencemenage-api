@@ -1,5 +1,6 @@
 from rest_framework import serializers
 from django.db.models import Q
+from django.utils import timezone
 from .models import Client
 
 
@@ -7,10 +8,19 @@ class ClientSerializer(serializers.ModelSerializer):
     display_name = serializers.ReadOnlyField()
     demandes_count = serializers.SerializerMethodField()
     is_airbnb = serializers.SerializerMethodField()
+    nb_biens_actifs_airbnb = serializers.SerializerMethodField()
+    sous_seuil_alerte = serializers.SerializerMethodField()
+    en_periode_probatoire = serializers.SerializerMethodField()
 
     class Meta:
         model = Client
         fields = '__all__'
+
+    def to_internal_value(self, data):
+        if hasattr(data, 'get') and data.get('trigramme') == '':
+            data = data.copy()
+            data['trigramme'] = None
+        return super().to_internal_value(data)
 
     def get_demandes_count(self, obj):
         return obj.demandes.filter(parent_demande__isnull=True).count()
@@ -21,6 +31,30 @@ class ClientSerializer(serializers.ModelSerializer):
             Q(service__icontains='air bnb') |
             Q(service__icontains='conciergerie')
         ).exists() or (hasattr(obj, 'biens_airbnb') and obj.biens_airbnb.exists())
+
+    def get_nb_biens_actifs_airbnb(self, obj):
+        if not hasattr(obj, 'biens_airbnb'):
+            return 0
+        return obj.biens_airbnb.filter(is_active=True, statut_activation='actif').count()
+
+    def get_sous_seuil_alerte(self, obj):
+        nb = self.get_nb_biens_actifs_airbnb(obj)
+        if nb == 0 and not self.get_is_airbnb(obj):
+            return False
+        try:
+            from airbnb.models import AirbnbConfig
+            seuil = AirbnbConfig.objects.values_list('seuil_biens_conciergerie', flat=True).first()
+            seuil = seuil if seuil is not None else 3
+        except Exception:
+            seuil = 3
+        return nb < seuil
+
+    def get_en_periode_probatoire(self, obj):
+        if obj.mode_paiement_airbnb != 'mensuel' or obj.probatoire_bascule_annulee:
+            return False
+        if not obj.probatoire_jusqu_au:
+            return False
+        return timezone.localdate() <= obj.probatoire_jusqu_au
 
 
 class ClientListSerializer(serializers.ModelSerializer):
@@ -37,7 +71,8 @@ class ClientListSerializer(serializers.ModelSerializer):
             'phone', 'email', 'segment', 'city', 'neighborhood', 'address', 
             'created_at', 'demandes_count', 'latest_demande',
             'avis_commercial', 'avis_operationnel', 'is_blacklisted',
-            'assigned_commercial', 'assigned_commercial_name', 'is_airbnb'
+            'assigned_commercial', 'assigned_commercial_name', 'is_airbnb',
+            'trigramme', 'mode_paiement_airbnb', 'statut_airbnb', 'eligible_conciergerie'
         ]
 
     def get_is_airbnb(self, obj):

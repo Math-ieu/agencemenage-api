@@ -22,31 +22,46 @@ class FactureViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        from accounts.permissions import is_exempt_from_ownership
-        if user and user.is_authenticated and not is_exempt_from_ownership(user):
+        from accounts.permissions import is_exempt_from_ownership, map_role_to_db_key
+        if not user or not user.is_authenticated or user.role == 'admin':
+            return qs
+
+        if user.role == 'responsable_facturation':
+            return qs.filter(source=Facture.SOURCE_AIRBNB)
+        if user.role == 'client_conciergerie':
+            if user.client_id:
+                return qs.filter(source=Facture.SOURCE_AIRBNB, client_id=user.client_id)
+            return qs.none()
+        if user.role in ['runner', 'responsable_linge', 'operationnel']:
+            return qs.none()
+        if user.role in ['responsable_operations', 'charge_operations']:
+            return qs.exclude(source=Facture.SOURCE_AIRBNB)
+
+        if not is_exempt_from_ownership(user):
             from accounts.models import RolePermission
-            from accounts.permissions import map_role_to_db_key
             db_role = map_role_to_db_key(user.role)
             try:
                 rp = RolePermission.objects.filter(role=db_role).first()
                 permissions_list = rp.permissions if rp else []
             except Exception:
                 permissions_list = []
-                
+
             has_consulter_factures = any(p in permissions_list for p in [
-                'consulter_factures', 'voir_la_caisse', 'mouvements_caisse', 
+                'consulter_factures', 'voir_la_caisse', 'mouvements_caisse',
                 'consulter_tresorerie', 'consulter_dus_agences_profils'
             ])
             if not has_consulter_factures:
-                from django.db.models import Q
                 qs = qs.filter(
                     Q(demande__created_by=user) |
                     Q(demande__assigned_to=user) |
-                    Q(demande__assigned_to_operations=user)
+                    Q(demande__assigned_to_operations=user) |
+                    Q(source=Facture.SOURCE_AIRBNB, client__assigned_commercial=user)
                 )
+            elif user.role == 'commercial':
+                qs = qs.filter(~Q(source=Facture.SOURCE_AIRBNB) | Q(client__assigned_commercial=user))
         return qs
     filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
-    filterset_fields = ['statut', 'client']
+    filterset_fields = ['statut', 'client', 'source']
     search_fields = ['numero', 'client__first_name', 'client__last_name', 'client__entity_name']
     ordering = ['-created_at']
 
@@ -65,28 +80,43 @@ class PaiementViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         qs = super().get_queryset()
-        from accounts.permissions import is_exempt_from_ownership
-        if user and user.is_authenticated and not is_exempt_from_ownership(user):
+        from accounts.permissions import is_exempt_from_ownership, map_role_to_db_key
+        if not user or not user.is_authenticated or user.role == 'admin':
+            return qs
+
+        if user.role == 'responsable_facturation':
+            return qs.filter(facture__source=Facture.SOURCE_AIRBNB)
+        if user.role == 'client_conciergerie':
+            if user.client_id:
+                return qs.filter(facture__source=Facture.SOURCE_AIRBNB, facture__client_id=user.client_id)
+            return qs.none()
+        if user.role in ['runner', 'responsable_linge', 'operationnel']:
+            return qs.none()
+        if user.role in ['responsable_operations', 'charge_operations']:
+            return qs.exclude(facture__source=Facture.SOURCE_AIRBNB)
+
+        if not is_exempt_from_ownership(user):
             from accounts.models import RolePermission
-            from accounts.permissions import map_role_to_db_key
             db_role = map_role_to_db_key(user.role)
             try:
                 rp = RolePermission.objects.filter(role=db_role).first()
                 permissions_list = rp.permissions if rp else []
             except Exception:
                 permissions_list = []
-                
+
             has_consulter_factures = any(p in permissions_list for p in [
-                'consulter_factures', 'voir_la_caisse', 'mouvements_caisse', 
+                'consulter_factures', 'voir_la_caisse', 'mouvements_caisse',
                 'consulter_tresorerie', 'consulter_dus_agences_profils'
             ])
             if not has_consulter_factures:
-                from django.db.models import Q
                 qs = qs.filter(
                     Q(facture__demande__created_by=user) |
                     Q(facture__demande__assigned_to=user) |
-                    Q(facture__demande__assigned_to_operations=user)
+                    Q(facture__demande__assigned_to_operations=user) |
+                    Q(facture__source=Facture.SOURCE_AIRBNB, facture__client__assigned_commercial=user)
                 )
+            elif user.role == 'commercial':
+                qs = qs.filter(~Q(facture__source=Facture.SOURCE_AIRBNB) | Q(facture__client__assigned_commercial=user))
         return qs
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['mode', 'facture']
@@ -103,6 +133,49 @@ class PaiementViewSet(viewsets.ModelViewSet):
         elif total_paye > 0:
             facture.statut = Facture.PARTIEL
         facture.save()
+
+        if facture.source == Facture.SOURCE_AIRBNB:
+            self._sync_airbnb_caisse_and_suspension(paiement, facture)
+
+    def _sync_airbnb_caisse_and_suspension(self, paiement, facture):
+        if not getattr(paiement, '_skip_caisse_hook', False) and not EntreeCaisse.objects.filter(paiement=paiement).exists():
+            is_especes = (paiement.mode == Paiement.ESPECES)
+            caisse_type = EntreeCaisse.CAISSE if is_especes else EntreeCaisse.TRESORERIE
+            categorie = 'Virement client reçu' if paiement.mode == Paiement.VIREMENT else 'Encaissement client (auto)'
+            mode_map = {
+                Paiement.ESPECES: EntreeCaisse.ESPECES,
+                Paiement.VIREMENT: EntreeCaisse.VIREMENT,
+                Paiement.CHEQUE: EntreeCaisse.CHEQUE,
+                Paiement.CARTE: EntreeCaisse.VIREMENT,
+            }
+            user_display = ''
+            if self.request.user and self.request.user.is_authenticated:
+                user_display = self.request.user.full_name or self.request.user.username or self.request.user.email
+            EntreeCaisse.objects.create(
+                type_mouvement=EntreeCaisse.ENTREE,
+                categorie=categorie,
+                caisse_type=caisse_type,
+                montant=paiement.montant,
+                description=f"Encaissement facture Airbnb {facture.numero}",
+                date=paiement.date,
+                mode_paiement=mode_map.get(paiement.mode, EntreeCaisse.VIREMENT),
+                client=facture.client,
+                client_nom=facture.client.display_name if facture.client else '',
+                utilisateur=user_display,
+                notes=paiement.notes or (f"Réf: {paiement.reference}" if paiement.reference else ''),
+                paiement=paiement,
+                created_by=self.request.user if self.request.user.is_authenticated else None,
+            )
+
+        if facture.client:
+            try:
+                from airbnb.services.suspension_helper import check_and_lift_client_suspension
+                check_and_lift_client_suspension(
+                    facture.client,
+                    user=self.request.user if self.request.user.is_authenticated else None,
+                )
+            except Exception:
+                pass
 
 
 class EntreeCaisseViewSet(viewsets.ModelViewSet):

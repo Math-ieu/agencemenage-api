@@ -4,6 +4,7 @@ import urllib.request
 import urllib.error
 import logging
 from django.conf import settings
+from django.utils import timezone
 
 logger = logging.getLogger(__name__)
 
@@ -188,7 +189,7 @@ def get_base_html_template(title, content):
       </div>
       <div class="footer">
         <p>Cet e-mail a été envoyé automatiquement. Merci de ne pas y répondre.</p>
-        <p>&copy; {settings.TIME_ZONE[:4] if hasattr(settings, 'TIME_ZONE') else '2026'} Agence Ménage. Tous droits réservés.</p>
+        <p>&copy; {timezone.now().year} Agence Ménage. Tous droits réservés.</p>
       </div>
     </div>
   </div>

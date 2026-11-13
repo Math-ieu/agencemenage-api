@@ -68,6 +68,7 @@ class SubscriptionPlanningSerializer(serializers.ModelSerializer):
 class AppNotificationSerializer(serializers.ModelSerializer):
     demande_service = serializers.CharField(source='demande.service', read_only=True)
     demande_client_name = serializers.CharField(source='demande.client.display_name', read_only=True)
+    commande_airbnb_numero = serializers.CharField(source='commande_airbnb.numero', read_only=True)
 
     class Meta:
         model = AppNotification

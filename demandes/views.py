@@ -23,6 +23,7 @@ from .serializers import (
     SubscriptionPlanningSerializer, AppNotificationSerializer, FeteReligieuseSerializer
 )
 from accounts.serializers import UserSerializer
+from accounts.permissions import RoleBasedPermission
 from .filters import DemandeFilter
 from .utils.profile_card import generate_profile_card
 
@@ -1972,7 +1973,7 @@ class PublicDemandeCreateView(viewsets.GenericViewSet):
 class DocumentViewSet(viewsets.ModelViewSet):
     queryset = Document.objects.all()
     serializer_class = DocumentSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def perform_create(self, serializer):
         serializer.save(created_by=self.request.user)
@@ -1981,6 +1982,7 @@ class DocumentViewSet(viewsets.ModelViewSet):
 class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
     queryset = AuditLog.objects.select_related('user').all()
     serializer_class = AuditLogSerializer
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter]
     filterset_fields = ['model_name', 'action', 'object_id']
     ordering = ['-timestamp']
@@ -1989,7 +1991,7 @@ class AuditLogViewSet(viewsets.ReadOnlyModelViewSet):
 class AppNotificationViewSet(viewsets.ModelViewSet):
     queryset = AppNotification.objects.all()
     serializer_class = AppNotificationSerializer
-    permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
 
     def get_queryset(self):
         user = self.request.user
@@ -1998,13 +2000,25 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
         
         if user.is_staff or user.role == 'admin':
             return AppNotification.objects.all()
-            
-        notifications = AppNotification.objects.only('id', 'target_roles')
+
+        user_role = str(user.role or '').lower()
+        matching_roles = {user_role}
+        if user_role in {'charge_operations', 'responsable_operations', 'operationnel'}:
+            matching_roles.add('operations')
+
+        notifications = AppNotification.objects.only('id', 'target_roles', 'target_user_id')
         allowed_ids = []
         for n in notifications:
-            roles = n.target_roles
-            # If target_roles is empty or contains the user's role (check case-insensitively or exact)
-            if not roles or any(str(r).lower() == str(user.role).lower() for r in roles):
+            if n.target_user_id is not None:
+                if n.target_user_id == user.id:
+                    allowed_ids.append(n.id)
+                continue
+
+            roles = [str(r).lower() for r in (n.target_roles or [])]
+            if roles:
+                if any(r in matching_roles for r in roles):
+                    allowed_ids.append(n.id)
+            elif user_role not in {'client_conciergerie', 'runner', 'responsable_linge', 'responsable_facturation'}:
                 allowed_ids.append(n.id)
         return AppNotification.objects.filter(id__in=allowed_ids)
 

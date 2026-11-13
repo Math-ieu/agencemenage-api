@@ -1,6 +1,8 @@
 from datetime import date, timedelta
 from django.utils import timezone
 from ..models import CommandeAirbnb
+from .notification_service import notify_dispatch_20h
+from .pdf_service import save_fiche_mission_pdf
 
 
 def generate_mission_pdf_data(commande: CommandeAirbnb) -> dict:
@@ -44,36 +46,42 @@ def generate_mission_pdf_data(commande: CommandeAirbnb) -> dict:
             "1. Prendre 4 photos obligatoires (Salon, Chambre, SDB, Cuisine)",
             "2. Vérifier la présence d'objets oubliés et les signaler",
             "3. Laisser les clés dans la boîte sécurisée ou selon les consignes",
-            "4. Remettre le sac de linge sale fermé au Runner"
-        ]
+            "4. Remettre le sac de linge sale fermé au Runner",
+        ],
     }
 
 
 def dispatch_missions_for_date(target_date: date = None) -> dict:
     """
-    Simule / exécute l'envoi des fiches de mission chaque soir à 20h00 pour le lendemain (J+1).
+    Exécute l'envoi des fiches de mission PDF à 20h00 J-1 aux intervenantes et runners.
     """
     if not target_date:
-        target_date = timezone.now().date() + timedelta(days=1)
+        target_date = timezone.localdate() + timedelta(days=1)
 
     commandes = CommandeAirbnb.objects.filter(
         date_prestation=target_date,
-        statut__in=['remontee_tdb', 'assignee', 'en_cours']
+        statut__in=['remontee_tdb', 'assignee', 'en_cours'],
+        fiche_envoyee_le__isnull=True,
     ).select_related('bien', 'intervenante', 'intervenante_2', 'runner')
 
     dispatched = []
     for cmd in commandes:
+        pdf_url = save_fiche_mission_pdf(cmd)
         mission_data = generate_mission_pdf_data(cmd)
+        notify_dispatch_20h(cmd, pdf_url=pdf_url)
+        cmd.fiche_envoyee_le = timezone.now()
+        cmd.save(update_fields=['fiche_envoyee_le', 'updated_at'])
         dispatched.append({
             'commande_id': str(cmd.id),
             'numero': cmd.numero,
             'intervenantes': mission_data['intervenantes'],
             'bien_code': cmd.bien.code,
-            'status': 'dispatched_ready'
+            'fiche_mission_pdf_url': pdf_url,
+            'status': 'dispatched',
         })
 
     return {
         'date_cible': str(target_date),
         'total_missions': len(dispatched),
-        'dispatched_missions': dispatched
+        'dispatched_missions': dispatched,
     }

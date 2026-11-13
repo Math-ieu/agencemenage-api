@@ -16,8 +16,20 @@ class Facture(models.Model):
         (ANNULE, 'Annulée'),
     ]
 
+    SOURCE_CLASSIQUE = 'classique'
+    SOURCE_AIRBNB = 'airbnb'
+    SOURCE_CHOICES = [
+        (SOURCE_CLASSIQUE, 'Classique'),
+        (SOURCE_AIRBNB, 'Airbnb / Conciergerie'),
+    ]
+
     client = models.ForeignKey(Client, on_delete=models.PROTECT, related_name='factures')
     demande = models.ForeignKey(Demande, on_delete=models.SET_NULL, null=True, blank=True, related_name='factures')
+    source = models.CharField(max_length=20, choices=SOURCE_CHOICES, default=SOURCE_CLASSIQUE, db_index=True)
+    mode_facturation = models.CharField(max_length=20, blank=True, default='')
+    periode_debut = models.DateField(null=True, blank=True)
+    periode_fin = models.DateField(null=True, blank=True)
+    est_prorata = models.BooleanField(default=False)
     numero = models.CharField(max_length=50, unique=True)
     montant_total = models.DecimalField(max_digits=10, decimal_places=2)
     montant_paye = models.DecimalField(max_digits=10, decimal_places=2, default=0)
@@ -26,6 +38,18 @@ class Facture(models.Model):
     date_echeance = models.DateField(null=True, blank=True)
     pdf_file = models.FileField(upload_to='factures/', null=True, blank=True)
     notes = models.TextField(blank=True)
+    motif_annulation = models.TextField(blank=True, default='')
+    annulee_le = models.DateTimeField(null=True, blank=True)
+    annulee_par = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True, blank=True,
+        on_delete=models.SET_NULL,
+        related_name='factures_annulees'
+    )
+    virement_declare_le = models.DateTimeField(null=True, blank=True)
+    virement_reference = models.CharField(max_length=150, blank=True, default='')
+    virement_justificatif_url = models.URLField(max_length=500, blank=True, default='')
+    virement_montant_declare = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL,
         on_delete=models.SET_NULL,

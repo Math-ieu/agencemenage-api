@@ -27,6 +27,7 @@ class User(AbstractBaseUser, PermissionsMixin):
     RESPONSABLE_OPERATIONS = 'responsable_operations'
     CHARGE_OPERATIONS = 'charge_operations'
     OPERATIONNEL = 'operationnel'
+    RESPONSABLE_FACTURATION = 'responsable_facturation'
     RUNNER = 'runner'
     RESPONSABLE_LINGE = 'responsable_linge'
     CLIENT_CONCIERGERIE = 'client_conciergerie'
@@ -39,6 +40,7 @@ class User(AbstractBaseUser, PermissionsMixin):
         (RESPONSABLE_OPERATIONS, 'Responsable des Opérations'),
         (CHARGE_OPERATIONS, 'Chargée des Opérations'),
         (OPERATIONNEL, 'Opérationnel'),
+        (RESPONSABLE_FACTURATION, 'Responsable Facturation'),
         (RUNNER, 'Runner / Chauffeur Livreur'),
         (RESPONSABLE_LINGE, 'Responsable Linge / Blanchisserie'),
         (CLIENT_CONCIERGERIE, 'Client Conciergerie'),
@@ -49,6 +51,14 @@ class User(AbstractBaseUser, PermissionsMixin):
     first_name = models.CharField(max_length=100, blank=True, default='')
     last_name = models.CharField(max_length=100, blank=True, default='')
     role = models.CharField(max_length=30, choices=ROLE_CHOICES, default=COMMERCIAL)
+    client = models.ForeignKey(
+        'clients.Client',
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name='portail_users',
+        verbose_name="Client Conciergerie lié"
+    )
     is_active = models.BooleanField(default=True)
     is_staff = models.BooleanField(default=False)
     phone = models.CharField(max_length=50, blank=True, default='')
