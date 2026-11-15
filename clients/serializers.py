@@ -1,5 +1,4 @@
 from rest_framework import serializers
-from django.db.models import Q
 from django.utils import timezone
 from .models import Client
 
@@ -26,11 +25,7 @@ class ClientSerializer(serializers.ModelSerializer):
         return obj.demandes.filter(parent_demande__isnull=True).count()
 
     def get_is_airbnb(self, obj):
-        return obj.demandes.filter(
-            Q(service__icontains='airbnb') |
-            Q(service__icontains='air bnb') |
-            Q(service__icontains='conciergerie')
-        ).exists() or (hasattr(obj, 'biens_airbnb') and obj.biens_airbnb.exists())
+        return obj.is_airbnb_client()
 
     def get_nb_biens_actifs_airbnb(self, obj):
         if not hasattr(obj, 'biens_airbnb'):
@@ -76,11 +71,7 @@ class ClientListSerializer(serializers.ModelSerializer):
         ]
 
     def get_is_airbnb(self, obj):
-        return obj.demandes.filter(
-            Q(service__icontains='airbnb') |
-            Q(service__icontains='air bnb') |
-            Q(service__icontains='conciergerie')
-        ).exists() or (hasattr(obj, 'biens_airbnb') and obj.biens_airbnb.exists())
+        return obj.is_airbnb_client()
 
     def get_assigned_commercial_name(self, obj):
         return obj.assigned_commercial.full_name if obj.assigned_commercial else None

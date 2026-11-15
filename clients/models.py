@@ -1,6 +1,7 @@
 import calendar
 from datetime import date
 from django.db import models
+from django.db.models import Q
 from django.conf import settings
 from django.utils import timezone
 
@@ -128,6 +129,33 @@ class Client(models.Model):
         if self.segment == self.ENTREPRISE:
             return self.entity_name or self.contact_person or name_parts or self.phone
         return name_parts or self.entity_name or self.phone
+
+    @staticmethod
+    def airbnb_client_q():
+        """Predicat ORM identifiant strictement les clients du module Airbnb."""
+        return (
+            Q(demandes__service__icontains='airbnb')
+            | Q(demandes__service__icontains='air bnb')
+            | Q(demandes__service__icontains='conciergerie')
+            | Q(biens_airbnb__isnull=False)
+            | (Q(trigramme__isnull=False) & ~Q(trigramme=''))
+            | Q(date_demarrage_airbnb__isnull=False)
+            | Q(contrat_signe_airbnb=True)
+        )
+
+    def is_airbnb_client(self):
+        """Indique si ce client appartient au périmètre Airbnb."""
+        return bool(
+            (self.trigramme and self.trigramme.strip())
+            or self.date_demarrage_airbnb is not None
+            or self.contrat_signe_airbnb
+            or (hasattr(self, 'biens_airbnb') and self.biens_airbnb.exists())
+            or self.demandes.filter(
+                Q(service__icontains='airbnb')
+                | Q(service__icontains='air bnb')
+                | Q(service__icontains='conciergerie')
+            ).exists()
+        )
 
 class ClientActionLog(models.Model):
     client = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='action_logs')

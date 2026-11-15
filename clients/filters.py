@@ -17,16 +17,10 @@ class ClientFilter(django_filters.FilterSet):
         fields = ['segment', 'city', 'is_airbnb']
 
     def filter_is_airbnb(self, queryset, name, value):
-        airbnb_q = (
-            Q(demandes__service__icontains='airbnb') |
-            Q(demandes__service__icontains='air bnb') |
-            Q(demandes__service__icontains='conciergerie') |
-            Q(biens_airbnb__isnull=False)
-        )
+        airbnb_q = Client.airbnb_client_q()
         if value:
             return queryset.filter(airbnb_q).distinct()
-        else:
-            return queryset.exclude(airbnb_q).distinct()
+        return queryset.exclude(airbnb_q).distinct()
 
     def filter_by_statut_or_paiement(self, queryset, name, value):
         from demandes.models import Demande
