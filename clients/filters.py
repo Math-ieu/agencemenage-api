@@ -10,17 +10,20 @@ class ClientFilter(django_filters.FilterSet):
     
     # Allows filtering clients based on the status of their demands
     statut = django_filters.CharFilter(method='filter_by_statut_or_paiement')
-    is_airbnb = django_filters.BooleanFilter(method='filter_is_airbnb')
+    is_airbnb = django_filters.CharFilter(method='filter_is_airbnb')
 
     class Meta:
         model = Client
         fields = ['segment', 'city', 'is_airbnb']
 
     def filter_is_airbnb(self, queryset, name, value):
+        val = str(value).strip().lower()
         airbnb_q = Client.airbnb_client_q()
-        if value:
+        if val in ('1', 'true', 'yes', 'oui'):
             return queryset.filter(airbnb_q).distinct()
-        return queryset.exclude(airbnb_q).distinct()
+        if val in ('0', 'false', 'no', 'non'):
+            return queryset.exclude(airbnb_q).distinct()
+        return queryset
 
     def filter_by_statut_or_paiement(self, queryset, name, value):
         from demandes.models import Demande
