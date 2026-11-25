@@ -2,6 +2,34 @@ import uuid
 from django.db import models
 
 
+MARRAKECH_STATUS_CHOICES = [
+    ('coming_soon', 'Ouverture en préparation'),
+    ('active', 'Service ouvert'),
+    ('hidden', 'Masqué'),
+]
+
+PROMO_BANNER_AUDIENCE_CHOICES = [
+    ('all', 'Tous'),
+    ('particulier', 'Particuliers'),
+    ('entreprise', 'Entreprises'),
+]
+
+DEFAULT_MARRAKECH_SERVICES = {
+    'menage_standard': False,
+    'grand_menage': False,
+    'menage_airbnb': False,
+    'fin_chantier': False,
+    'garde_malade': False,
+    'post_sinistre': False,
+    'entreprises': False,
+    'airbnb_linge': False,
+}
+
+
+def default_marrakech_services():
+    return dict(DEFAULT_MARRAKECH_SERVICES)
+
+
 class SiteConfig(models.Model):
     """
     Configuration globale des coordonnées et informations affichées sur le site web.
@@ -127,6 +155,87 @@ class SiteConfig(models.Model):
         default=list,
         blank=True,
         verbose_name="Numéros WhatsApp de notification interne"
+    )
+
+    # Déploiement Marrakech (3e ville — sans bureau physique)
+    marrakech_status = models.CharField(
+        max_length=20,
+        choices=MARRAKECH_STATUS_CHOICES,
+        default='coming_soon',
+        verbose_name="Statut déploiement Marrakech"
+    )
+    marrakech_services = models.JSONField(
+        default=default_marrakech_services,
+        blank=True,
+        verbose_name="Services ouverts à Marrakech"
+    )
+
+    # Bandeau Promotionnel CMS (Site Web)
+    promo_banner_enabled = models.BooleanField(
+        default=False,
+        verbose_name="Activer le bandeau promotionnel"
+    )
+    promo_banner_campaign_id = models.CharField(
+        max_length=100,
+        blank=True,
+        default="",
+        verbose_name="Identifiant de campagne promo"
+    )
+    promo_banner_label = models.CharField(
+        max_length=80,
+        blank=True,
+        default="",
+        verbose_name="Libellé de campagne (ex. BLACK FRIDAY)"
+    )
+    promo_banner_text = models.CharField(
+        max_length=200,
+        blank=True,
+        default="Votre code promotionnel :",
+        verbose_name="Texte d'accroche du bandeau"
+    )
+    promo_banner_code = models.CharField(
+        max_length=50,
+        blank=True,
+        default="",
+        verbose_name="Code promotionnel affiché"
+    )
+    promo_banner_cta_label = models.CharField(
+        max_length=60,
+        blank=True,
+        default="En profiter",
+        verbose_name="Libellé du CTA"
+    )
+    promo_banner_target_url = models.CharField(
+        max_length=255,
+        blank=True,
+        default="/services/particulier/menage-standard",
+        verbose_name="URL de destination du CTA"
+    )
+    promo_banner_start_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Date/heure de début (Africa/Casablanca)"
+    )
+    promo_banner_end_at = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Date/heure de fin (Africa/Casablanca)"
+    )
+    promo_banner_audience = models.CharField(
+        max_length=20,
+        choices=PROMO_BANNER_AUDIENCE_CHOICES,
+        default='all',
+        verbose_name="Public ciblé"
+    )
+    promo_banner_cities = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Villes ciblées"
+    )
+    promo_banner_services = models.JSONField(
+        default=list,
+        blank=True,
+        verbose_name="Services ciblés"
     )
 
     updated_at = models.DateTimeField(auto_now=True)

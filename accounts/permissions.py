@@ -362,6 +362,36 @@ class RoleBasedPermission(permissions.BasePermission):
         if view_name in AIRBNB_VIEWSETS:
             return self._has_airbnb_permission(request, view_name, action, role)
 
+        # 10. Paramètres du site (SiteConfigViewSet)
+        if view_name == 'SiteConfigViewSet':
+            return has_perm('parametres_globaux')
+
+        # 11. Leads & Contacts (ContactLeadViewSet)
+        if view_name == 'ContactLeadViewSet':
+            if action == 'destroy':
+                return has_perm('supprimer_demande_dashboard') or has_perm('parametres_globaux')
+            if action == 'convert':
+                return (
+                    has_perm('creer_demande')
+                    or has_perm('creer_valider_demande')
+                    or has_perm('traiter_demandes_affectees')
+                )
+            if action in ['create', 'update', 'partial_update']:
+                return (
+                    has_perm('traiter_demandes_affectees')
+                    or has_perm('creer_valider_demande')
+                    or has_perm('modifier_demande')
+                    or has_perm('consulter_demandes')
+                )
+            if action in ['list', 'retrieve']:
+                return (
+                    has_perm('consulter_demandes')
+                    or has_perm('traiter_demandes_affectees')
+                    or has_perm('creer_valider_demande')
+                    or has_perm('consulter_clients')
+                )
+            return False
+
         return True
 
     def _has_airbnb_permission(self, request, view_name, action, role):

@@ -1,5 +1,5 @@
 from django.contrib import admin
-from .models import Demande, NRPLog, Document, AuditLog
+from .models import Demande, NRPLog, Document, AuditLog, ContactLead
 
 
 class NRPLogInline(admin.TabularInline):
@@ -30,3 +30,13 @@ class AuditLogAdmin(admin.ModelAdmin):
     list_filter = ['model_name', 'action']
     ordering = ['-timestamp']
     readonly_fields = ['user', 'action', 'model_name', 'object_id', 'extra_data', 'timestamp']
+
+
+@admin.register(ContactLead)
+class ContactLeadAdmin(admin.ModelAdmin):
+    list_display = ['id', 'entity_name', 'phone', 'city', 'service', 'statut', 'channel', 'assigned_to', 'converted_demande', 'created_at']
+    list_filter = ['statut', 'segment', 'channel']
+    search_fields = ['entity_name', 'contact_name', 'phone', 'email', 'city', 'service', 'utm_campaign', 'gclid']
+    ordering = ['-created_at']
+    raw_id_fields = ['assigned_to', 'converted_demande', 'converted_by']
+    readonly_fields = ['created_at', 'updated_at', 'converted_at']

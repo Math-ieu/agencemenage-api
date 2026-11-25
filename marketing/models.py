@@ -63,6 +63,23 @@ class PromoCode(models.Model):
     customer_status = models.CharField(max_length=255)
     services = models.JSONField(default=list, blank=True)
     canaux = models.JSONField(default=list, blank=True)
+    villes = models.JSONField(default=list, blank=True, verbose_name="Villes éligibles")
+    modes_reservation = models.JSONField(default=list, blank=True, verbose_name="Modes de réservation éligibles")
+    minimum_commande = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Montant minimum de commande (MAD)",
+    )
+    plafond_reduction = models.DecimalField(
+        max_digits=10,
+        decimal_places=2,
+        null=True,
+        blank=True,
+        verbose_name="Plafond de réduction (MAD)",
+    )
+    cumulable = models.BooleanField(default=False, verbose_name="Cumulable")
     message_promotionnel = models.TextField(blank=True)
     uses = models.IntegerField(default=0)
     limit_uses = models.IntegerField(null=True, blank=True)

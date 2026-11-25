@@ -294,132 +294,32 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework import status
 from rest_framework.permissions import AllowAny
-from django.utils import timezone
+from .validators import validate_promo_for_booking
+
 
 class PublicPromoCodeValidateView(APIView):
     permission_classes = [AllowAny]
+    authentication_classes = []
 
     def post(self, request, *args, **kwargs):
-        code_str = request.data.get('code', '').strip()
-        segment = request.data.get('segment', '').strip()
-        service = request.data.get('service', '').strip()
-        phone = request.data.get('phone', '').strip()
-
-        if not code_str:
+        if not isinstance(request.data, dict):
             return Response(
-                {"valid": False, "message": "Veuillez saisir un code promo."},
-                status=status.HTTP_400_BAD_REQUEST
+                {
+                    "valid": False,
+                    "reason_code": "invalid_payload",
+                    "message": "Format de requête invalide.",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
             )
 
-        promo = PromoCode.objects.filter(code__iexact=code_str, archived=False).first()
-        if not promo:
-            return Response(
-                {"valid": False, "message": "Ce code promo n'existe pas ou est invalide."},
-                status=status.HTTP_404_NOT_FOUND
-            )
-
-        if promo.status != 'active':
-            return Response(
-                {"valid": False, "message": "Ce code promo n'est pas actif."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        today = timezone.localdate()
-        if promo.valid_from > today:
-            return Response(
-                {"valid": False, "message": "Ce code promo n'est pas encore valide."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        if promo.valid_until and promo.valid_until < today:
-            return Response(
-                {"valid": False, "message": "Ce code promo a expiré."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # Segment check
-        if promo.segment != 'tous' and segment:
-            if promo.segment == 'particulier' and segment != 'particulier':
-                return Response(
-                    {"valid": False, "message": "Ce code promo est réservé aux particuliers."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            elif promo.segment == 'entreprise' and segment != 'entreprise':
-                return Response(
-                    {"valid": False, "message": "Ce code promo est réservé aux entreprises."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        # Service check
-        if promo.services and isinstance(promo.services, list) and len(promo.services) > 0:
-            import unicodedata
-            def clean_service(s):
-                if not s:
-                    return ""
-                s = s.lower().strip()
-                s = "".join(c for c in unicodedata.normalize('NFD', s) if unicodedata.category(c) != 'Mn')
-                s = s.replace("nettoyage", "menage")
-                s = s.replace("air bnb", "airbnb")
-                s = s.replace("garde malade", "auxiliaire de vie")
-                s = s.replace("placement & gestion", "placement")
-                s = s.replace("placement et gestion", "placement")
-                return "".join(c for c in s if c.isalnum())
-
-            cleaned_services = [clean_service(srv) for srv in promo.services]
-            cleaned_input_service = clean_service(service)
-
-            if not service or cleaned_input_service not in cleaned_services:
-                return Response(
-                    {"valid": False, "message": "Ce code promo n'est pas applicable à ce service."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        # Target client check for BD promo codes
-        if promo.promo_type == 'bd':
-            if not phone:
-                return Response(
-                    {"valid": False, "message": "Veuillez renseigner votre téléphone pour appliquer ce code."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-            
-            is_valid_target, target_msg = promo.matches_phone(phone)
-            if not is_valid_target:
-                return Response(
-                    {"valid": False, "message": target_msg},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        # Usage limit validation
-        if promo.limit_uses is not None and promo.uses >= promo.limit_uses:
-            return Response(
-                {"valid": False, "message": "Ce code promo a atteint sa limite d'utilisation."},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-
-        # One use per client check
-        if promo.one_use_per_client and phone:
-            from clients.models import Client
-            phone_clean = phone.strip()
-            phone_no_spaces = phone_clean.replace(" ", "")
-            
-            client = Client.objects.filter(phone=phone_clean, is_archived=False).order_by('-created_at').first()
-            if not client:
-                client = Client.objects.filter(phone=phone_no_spaces, is_archived=False).order_by('-created_at').first()
-                
-            if client and client.demandes.filter(promo_code=promo).exists():
-                return Response(
-                    {"valid": False, "message": "Vous avez déjà utilisé ce code promo."},
-                    status=status.HTTP_400_BAD_REQUEST
-                )
-
-        return Response({
-            "valid": True,
-            "id": promo.id,
-            "code": promo.code,
-            "name": promo.name,
-            "reduction": float(promo.reduction),
-            "reduction_type": promo.reduction_type,
-            "promo_type": promo.promo_type,
-            "message": "Code promo valide !"
-        }, status=status.HTTP_200_OK)
+        result = validate_promo_for_booking(
+            request.data.get('code'),
+            segment=request.data.get('segment', ''),
+            service=request.data.get('service', ''),
+            phone=request.data.get('phone', ''),
+            city=request.data.get('city', ''),
+            booking_mode=request.data.get('booking_mode', ''),
+            order_amount=request.data.get('order_amount', None),
+        )
+        return Response(result["payload"], status=result["status_code"])
 

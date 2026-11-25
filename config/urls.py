@@ -16,7 +16,10 @@ from accounts.views import (
 )
 from clients.views import ClientViewSet
 from agents.views import AgentViewSet
-from demandes.views import DemandeViewSet, PublicDemandeCreateView, AuditLogViewSet, DocumentViewSet, AppNotificationViewSet, FeteReligieuseViewSet
+from demandes.views import (
+    DemandeViewSet, PublicDemandeCreateView, AuditLogViewSet, DocumentViewSet,
+    AppNotificationViewSet, FeteReligieuseViewSet, ContactLeadViewSet, PublicContactLeadCreateView
+)
 from missions.views import MissionViewSet
 from finance.views import FactureViewSet, PaiementViewSet, EntreeCaisseViewSet
 from feedback.views import FeedbackViewSet
@@ -32,6 +35,7 @@ router.register(r'users', UserViewSet, basename='user')
 router.register(r'clients', ClientViewSet, basename='client')
 router.register(r'agents', AgentViewSet, basename='agent')
 router.register(r'demandes', DemandeViewSet, basename='demande')
+router.register(r'leads', ContactLeadViewSet, basename='contact-lead')
 router.register(r'documents', DocumentViewSet, basename='document')
 router.register(r'missions', MissionViewSet, basename='mission')
 router.register(r'finance/factures', FactureViewSet, basename='facture')
@@ -50,6 +54,8 @@ urlpatterns = [
     # Public endpoint (no auth required — from website)
     path('api/public/demandes/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demande_create'),
     path('api/public/demand/', PublicDemandeCreateView.as_view({'post': 'create'}), name='public_demand_create'),
+    path('api/public/leads/', PublicContactLeadCreateView.as_view({'post': 'create'}), name='public_lead_create'),
+    path('api/public/leads', PublicContactLeadCreateView.as_view({'post': 'create'}), name='public_lead_create_no_slash'),
     path('api/public/blog/posts/', PostViewSet.as_view({'get': 'list'}), name='public-blog-list'),
     path('api/public/blog/posts/<slug:slug>/', PostViewSet.as_view({'get': 'retrieve'}), name='public-blog-detail'),
     path('api/public/promos/validate/', PublicPromoCodeValidateView.as_view(), name='public_promos_validate'),

@@ -780,6 +780,91 @@ class FeteReligieuse(models.Model):
         return None
 
 
+class ContactLead(models.Model):
+    """Prise de contact / demande de devis rapide issue du site web, séparée des Demandes qualifiées."""
+    NOUVEAU = 'nouveau'
+    CONTACTE = 'contacte'
+    QUALIFIE = 'qualifie'
+    CONVERTI = 'converti'
+    ARCHIVE = 'archive'
+    STATUT_CHOICES = [
+        (NOUVEAU, 'Nouveau'),
+        (CONTACTE, 'Contacté'),
+        (QUALIFIE, 'Qualifié'),
+        (CONVERTI, 'Converti en demande'),
+        (ARCHIVE, 'Archivé / Sans suite'),
+    ]
+
+    ENTREPRISE = 'entreprise'
+    PARTICULIER = 'particulier'
+    SEGMENT_CHOICES = [
+        (ENTREPRISE, 'Entreprise'),
+        (PARTICULIER, 'Particulier'),
+    ]
+
+    CHANNEL_B2B_MODAL = 'b2b_quote_modal'
+    CHANNEL_CONTACT_FORM = 'contact_form'
+    CHANNEL_OTHER = 'other'
+    CHANNEL_CHOICES = [
+        (CHANNEL_B2B_MODAL, 'Modale Devis Entreprise'),
+        (CHANNEL_CONTACT_FORM, 'Formulaire Contact'),
+        (CHANNEL_OTHER, 'Autre'),
+    ]
+
+    segment = models.CharField(max_length=20, choices=SEGMENT_CHOICES, default=ENTREPRISE)
+    channel = models.CharField(max_length=40, choices=CHANNEL_CHOICES, default=CHANNEL_B2B_MODAL)
+    entity_name = models.CharField(max_length=255)
+    contact_name = models.CharField(max_length=255, blank=True, default='')
+    phone = models.CharField(max_length=50)
+    email = models.EmailField(blank=True, default='')
+    city = models.CharField(max_length=150, blank=True, default='')
+    service = models.CharField(max_length=150, blank=True, default='')
+    notes = models.TextField(blank=True, default='')
+
+    statut = models.CharField(max_length=30, choices=STATUT_CHOICES, default=NOUVEAU, db_index=True)
+    commercial_notes = models.TextField(blank=True, default='')
+
+    source_page = models.CharField(max_length=150, blank=True, default='')
+    landing_url = models.CharField(max_length=500, blank=True, default='')
+    utm_source = models.CharField(max_length=150, blank=True, default='')
+    utm_medium = models.CharField(max_length=150, blank=True, default='')
+    utm_campaign = models.CharField(max_length=150, blank=True, default='')
+    utm_content = models.CharField(max_length=150, blank=True, default='')
+    utm_term = models.CharField(max_length=150, blank=True, default='')
+    gclid = models.CharField(max_length=255, blank=True, default='')
+
+    assigned_to = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='assigned_contact_leads',
+    )
+    converted_demande = models.ForeignKey(
+        Demande,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='source_leads',
+    )
+    converted_at = models.DateTimeField(null=True, blank=True)
+    converted_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        related_name='converted_contact_leads',
+    )
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+        verbose_name = 'Lead / Contact'
+        verbose_name_plural = 'Leads & Contacts'
+
+    def __str__(self):
+        return f"{self.entity_name} — {self.service or self.get_channel_display()} ({self.get_statut_display()})"
+
+
 @receiver(pre_save, sender=Demande)
 def sync_commercial_on_demande_update(sender, instance, **kwargs):
     if not instance.pk:

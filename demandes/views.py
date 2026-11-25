@@ -7,7 +7,7 @@ from django.core.files.base import ContentFile
 from django.http import FileResponse, Http404
 from django.db.models import Model
 from django.db.models import Q
-from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse, ContactLead
 from .utils.document_generators import generate_devis_pdf, generate_recap_png
 import datetime
 from django.utils import timezone
@@ -20,7 +20,8 @@ from .serializers import (
     DemandeSerializer, DemandeListSerializer,
     NRPLogSerializer, DocumentSerializer,
     PublicDemandeCreateSerializer, AuditLogSerializer, DemandeHistoriqueSerializer,
-    SubscriptionPlanningSerializer, AppNotificationSerializer, FeteReligieuseSerializer
+    SubscriptionPlanningSerializer, AppNotificationSerializer, FeteReligieuseSerializer,
+    PublicContactLeadCreateSerializer, ContactLeadSerializer
 )
 from accounts.serializers import UserSerializer
 from accounts.permissions import RoleBasedPermission
@@ -2659,3 +2660,225 @@ class FeteReligieuseViewSet(viewsets.ModelViewSet):
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).error(f"Error triggering holiday suspension notices: {e}")
+
+
+class PublicContactLeadCreateView(viewsets.GenericViewSet):
+    """Endpoint public (sans auth) pour enregistrer un lead / contact depuis le site web."""
+    permission_classes = [AllowAny]
+    serializer_class = PublicContactLeadCreateSerializer
+
+    def create(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        lead = serializer.save()
+        return Response({'id': lead.pk, 'statut': lead.statut}, status=status.HTTP_201_CREATED)
+
+
+class ContactLeadViewSet(viewsets.ModelViewSet):
+    """Gestion back-office des Leads & Contacts avant éventuelle conversion en Demande."""
+    queryset = ContactLead.objects.select_related('assigned_to', 'converted_demande', 'converted_by').all()
+    serializer_class = ContactLeadSerializer
+    permission_classes = [IsAuthenticated, RoleBasedPermission]
+    filter_backends = [DjangoFilterBackend, filters.SearchFilter, filters.OrderingFilter]
+    filterset_fields = ['statut', 'segment', 'channel', 'assigned_to']
+    search_fields = [
+        'entity_name', 'contact_name', 'phone', 'email',
+        'city', 'service', 'notes', 'utm_campaign', 'gclid',
+    ]
+    ordering_fields = ['created_at', 'updated_at', 'statut']
+    ordering = ['-created_at']
+
+    def perform_update(self, serializer):
+        instance = self.get_object()
+        tracked_fields = ('statut', 'commercial_notes', 'assigned_to_id', 'service', 'city')
+        before = {f: getattr(instance, f) for f in tracked_fields}
+        updated = serializer.save()
+        changed = {}
+        for f in tracked_fields:
+            new_val = getattr(updated, f)
+            if before[f] != new_val:
+                changed[f] = {'before': before[f], 'after': new_val}
+        AuditLog.objects.create(
+            user=self.request.user,
+            action='update_contact_lead',
+            model_name='ContactLead',
+            object_id=updated.pk,
+            extra_data={'changed_fields': changed},
+        )
+
+    def perform_destroy(self, instance):
+        lead_id = instance.pk
+        entity_name = instance.entity_name
+        instance.delete()
+        AuditLog.objects.create(
+            user=self.request.user,
+            action='delete_contact_lead',
+            model_name='ContactLead',
+            object_id=lead_id,
+            extra_data={'entity_name': entity_name},
+        )
+
+    @action(detail=True, methods=['post'], url_path='convert')
+    def convert(self, request, pk=None):
+        """Convertit un ContactLead qualifié en Demande (is_devis=True) et crée/rattache le Client."""
+        from django.db import transaction
+        from clients.models import Client
+
+        target_obj = self.get_object()
+        payload = request.data if isinstance(request.data, dict) else {}
+
+        with transaction.atomic():
+            lead = ContactLead.objects.select_for_update().get(pk=target_obj.pk)
+            if lead.converted_demande_id:
+                return Response(
+                    {
+                        'detail': 'Ce lead a déjà été converti en demande.',
+                        'demande_id': lead.converted_demande_id,
+                    },
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+
+            phone = (lead.phone or '').strip()[:30]
+            display_entity = (lead.entity_name or '').strip()
+            display_contact = (lead.contact_name or display_entity).strip()
+            client_name = (display_entity or display_contact).strip()
+
+            existing_client = (
+                Client.objects.filter(phone=phone, is_archived=False)
+                .order_by('-created_at')
+                .first()
+            )
+
+            id_statut = Demande.ID_NOUVELLE
+            potential_duplicate = None
+            assignee = lead.assigned_to or request.user
+
+            if existing_client:
+                existing_name = (existing_client.display_name or '').lower()
+                provided_name = client_name.lower()
+                if not provided_name or provided_name in existing_name or existing_name in provided_name:
+                    client = existing_client
+                    id_statut = Demande.ID_EXISTANT
+                    updated_client_fields = []
+                    if lead.city and not client.city:
+                        client.city = lead.city[:100]
+                        updated_client_fields.append('city')
+                    if lead.email and not client.email:
+                        client.email = lead.email
+                        updated_client_fields.append('email')
+                    if lead.segment == ContactLead.ENTREPRISE and display_entity and not client.entity_name:
+                        client.entity_name = display_entity[:200]
+                        updated_client_fields.append('entity_name')
+                    if display_contact and not client.contact_person:
+                        client.contact_person = display_contact[:200]
+                        updated_client_fields.append('contact_person')
+                    if assignee and not client.assigned_commercial:
+                        client.assigned_commercial = assignee
+                        updated_client_fields.append('assigned_commercial')
+                    if updated_client_fields:
+                        client.save(update_fields=updated_client_fields)
+                    if existing_client.assigned_commercial:
+                        assignee = existing_client.assigned_commercial
+                else:
+                    id_statut = Demande.ID_VERIF_REQUISE
+                    potential_duplicate = existing_client
+                    client = Client.objects.create(
+                        first_name='',
+                        last_name=display_contact[:100],
+                        entity_name=display_entity[:200] if lead.segment == ContactLead.ENTREPRISE else '',
+                        contact_person=display_contact[:200],
+                        phone=phone,
+                        email=lead.email or '',
+                        city=(lead.city or '')[:100],
+                        segment=lead.segment,
+                        assigned_commercial=assignee,
+                    )
+            else:
+                client = Client.objects.create(
+                    first_name='',
+                    last_name=display_contact[:100],
+                    entity_name=display_entity[:200] if lead.segment == ContactLead.ENTREPRISE else '',
+                    contact_person=display_contact[:200],
+                    phone=phone,
+                    email=lead.email or '',
+                    city=(lead.city or '')[:100],
+                    segment=lead.segment,
+                    assigned_commercial=assignee,
+                )
+
+            raw_service = payload.get('service') if isinstance(payload.get('service'), str) else ''
+            target_service = raw_service.strip() or (lead.service or '').strip() or 'Entretien de bureaux'
+
+            demande_segment = (
+                Demande.ENTREPRISE
+                if lead.segment == ContactLead.ENTREPRISE
+                else Demande.PARTICULIER
+            )
+
+            formulaire_data = {
+                'lead_id': lead.pk,
+                'entityName': display_entity,
+                'contactPerson': display_contact,
+                'phoneNumber': lead.phone,
+                'city': lead.city,
+                'service': target_service,
+                'additionalNotes': lead.notes,
+                'commercial_notes': lead.commercial_notes,
+                'channel': lead.channel,
+                'source_page': lead.source_page,
+                'landing_url': lead.landing_url,
+                'utm_source': lead.utm_source,
+                'utm_medium': lead.utm_medium,
+                'utm_campaign': lead.utm_campaign,
+                'utm_content': lead.utm_content,
+                'utm_term': lead.utm_term,
+                'gclid': lead.gclid,
+            }
+
+            demande = Demande.objects.create(
+                client=client,
+                service=target_service,
+                segment=demande_segment,
+                frequency=Demande.ONCE,
+                frequency_label='Sur devis',
+                is_devis=True,
+                prix=None,
+                statut=Demande.EN_ATTENTE,
+                source=Demande.SITE,
+                mode_paiement=Demande.VIREMENT,
+                identification_statut=id_statut,
+                potential_duplicate_client=potential_duplicate,
+                assigned_to=assignee,
+                created_by=request.user,
+                formulaire_data=formulaire_data,
+            )
+
+            lead.converted_demande = demande
+            lead.converted_at = timezone.now()
+            lead.converted_by = request.user
+            lead.statut = ContactLead.CONVERTI
+            lead.save(
+                update_fields=[
+                    'converted_demande',
+                    'converted_at',
+                    'converted_by',
+                    'statut',
+                    'updated_at',
+                ]
+            )
+
+            AuditLog.objects.create(
+                user=request.user,
+                action='convert_contact_lead',
+                model_name='ContactLead',
+                object_id=lead.pk,
+                extra_data={'demande_id': demande.pk, 'service': target_service},
+            )
+
+            return Response(
+                {
+                    'lead': ContactLeadSerializer(lead).data,
+                    'demande_id': demande.pk,
+                },
+                status=status.HTTP_201_CREATED,
+            )

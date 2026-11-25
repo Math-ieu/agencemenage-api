@@ -1,6 +1,6 @@
 import datetime
 from rest_framework import serializers
-from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse
+from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse, ContactLead
 from django.conf import settings
 from .utils.whatsapp import WhatsAppService
 from .utils.document_helpers import generate_demande_document
@@ -1355,6 +1355,17 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
 
     def to_internal_value(self, data):
         data = data.copy() if hasattr(data, 'copy') else dict(data)
+        self._raw_promo_code_str = ""
+
+        # Allow promo_code passed as raw string code (validated in create via shared validator)
+        raw_promo = data.get('promo_code')
+        if isinstance(raw_promo, str):
+            raw_promo_clean = raw_promo.strip()
+            if not raw_promo_clean:
+                data['promo_code'] = None
+            elif not raw_promo_clean.isdigit():
+                self._raw_promo_code_str = raw_promo_clean
+                data['promo_code'] = None
         
         # 1. Normalize frequency ('subscription' -> 'abonnement')
         freq = data.get('frequency')
@@ -1417,16 +1428,26 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
         return super().to_internal_value(data)
 
     def create(self, validated_data):
+        from django.db import transaction
         from clients.models import Client
+        from marketing.validators import validate_promo_for_booking
 
-        # Resolve promo code if any
+        # Capture promo input (PromoCode FK, raw string promo_code, or formulaire_data.promoCodeInput)
         promo_code = validated_data.pop('promo_code', None)
-        if not promo_code:
-            form_data = validated_data.get('formulaire_data', {})
-            promo_code_code = form_data.get('promoCodeInput') if isinstance(form_data, dict) else None
-            if promo_code_code:
-                from marketing.models import PromoCode
-                promo_code = PromoCode.objects.filter(code=str(promo_code_code).strip().upper(), archived=False, status='active').first()
+        form_data = validated_data.get('formulaire_data', {})
+        promo_input = promo_code
+        if promo_input is None:
+            raw_code = getattr(self, '_raw_promo_code_str', '')
+            if raw_code:
+                promo_input = raw_code
+            elif isinstance(form_data, dict):
+                candidate = (
+                    form_data.get('promoCodeInput')
+                    or form_data.get('promoCode')
+                    or form_data.get('promo_code')
+                )
+                if candidate and str(candidate).strip():
+                    promo_input = str(candidate).strip()
 
         # Extract client fields
         client_data = {
@@ -1445,108 +1466,117 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
         phone = client_data.pop('phone').strip()
         client_name = (client_data['entity_name'] or f"{client_data['first_name']} {client_data['last_name']}").strip()
 
-        # Identification Logic
-        id_statut = Demande.ID_NOUVELLE
-        potential_duplicate = None
-        client = None
+        with transaction.atomic():
+            # Identification Logic
+            id_statut = Demande.ID_NOUVELLE
+            potential_duplicate = None
+            client = None
 
-        # 1. Search for existing client by phone
-        existing_client = Client.objects.filter(phone=phone, is_archived=False).order_by('-created_at').first()
+            # 1. Search for existing client by phone
+            existing_client = Client.objects.filter(phone=phone, is_archived=False).order_by('-created_at').first()
 
-        if existing_client:
-            # 2. Check for name consistency
-            existing_name = existing_client.display_name.lower()
-            provided_name = client_name.lower()
-            
-            if not provided_name or provided_name in existing_name or existing_name in provided_name:
-                # Confirmed match
-                client = existing_client
-                id_statut = Demande.ID_EXISTANT
+            if existing_client:
+                # 2. Check for name consistency
+                existing_name = existing_client.display_name.lower()
+                provided_name = client_name.lower()
                 
-                # Update existing client info
-                if client_data['last_name']:
-                    client.last_name = client_data['last_name']
-                if client_data['first_name']:
-                    client.first_name = client_data['first_name']
-                if client_data['whatsapp']:
-                    client.whatsapp = client_data['whatsapp']
-                if client_data['email']:
-                    client.email = client_data['email']
-                if client_data['city']:
-                    client.city = client_data['city']
-                if client_data['neighborhood']:
-                    client.neighborhood = client_data['neighborhood']
-                if client_data['address']:
-                    client.address = client_data['address']
-                if client_data['entity_name']:
-                    client.entity_name = client_data['entity_name']
-                if client_data.get('contact_person'):
-                    client.contact_person = client_data['contact_person']
-                client.save()
-                
-                # Auto-assign to existing commercial
-                if existing_client.assigned_commercial:
-                    validated_data['assigned_to'] = existing_client.assigned_commercial
-            else:
-                # Potential duplicate
-                id_statut = Demande.ID_VERIF_REQUISE
-                potential_duplicate = existing_client
-                client = Client.objects.create(phone=phone, **client_data)
-        else:
-            # New client
-            client = Client.objects.create(phone=phone, **client_data)
-
-        # Automate segmentation
-        service = validated_data.get('service')
-        segment_provided = 'segment' in self.initial_data
-        
-        if service and not segment_provided:
-            segment = get_segment_from_service(service)
-            validated_data['segment'] = segment
-
-        # Sync client segment & Ownership
-        if client:
-            if 'segment' in validated_data:
-                client.segment = validated_data['segment']
-            if not client.assigned_commercial and validated_data.get('assigned_to'):
-                client.assigned_commercial = validated_data['assigned_to']
-            client.save()
-
-        # Enforce validation on promo_code if provided
-        if promo_code:
-            # 1. Check limit_uses
-            if promo_code.limit_uses is not None and promo_code.uses >= promo_code.limit_uses:
-                raise serializers.ValidationError({
-                    "promo_code": "Ce code promo a atteint sa limite d'utilisation."
-                })
-                
-            # 2. Check targeted client for BD promo codes
-            if promo_code.promo_type == 'bd':
-                if not promo_code.matches_client(client):
-                    status_display = promo_code.customer_status.lower()
-                    raise serializers.ValidationError({
-                        "promo_code": f"Ce code promo est réservé aux cibles ({status_display})."
-                    })
+                if not provided_name or provided_name in existing_name or existing_name in provided_name:
+                    # Confirmed match
+                    client = existing_client
+                    id_statut = Demande.ID_EXISTANT
                     
-            # 3. Check one use per client
-            if promo_code.one_use_per_client and client:
-                # Note: We check if there are any existing demands with this promo code
-                if client.demandes.filter(promo_code=promo_code).exists():
-                    raise serializers.ValidationError({
-                        "promo_code": "Vous avez déjà utilisé ce code promo."
-                    })
+                    # Update existing client info
+                    if client_data['last_name']:
+                        client.last_name = client_data['last_name']
+                    if client_data['first_name']:
+                        client.first_name = client_data['first_name']
+                    if client_data['whatsapp']:
+                        client.whatsapp = client_data['whatsapp']
+                    if client_data['email']:
+                        client.email = client_data['email']
+                    if client_data['city']:
+                        client.city = client_data['city']
+                    if client_data['neighborhood']:
+                        client.neighborhood = client_data['neighborhood']
+                    if client_data['address']:
+                        client.address = client_data['address']
+                    if client_data['entity_name']:
+                        client.entity_name = client_data['entity_name']
+                    if client_data.get('contact_person'):
+                        client.contact_person = client_data['contact_person']
+                    client.save()
+                    
+                    # Auto-assign to existing commercial
+                    if existing_client.assigned_commercial:
+                        validated_data['assigned_to'] = existing_client.assigned_commercial
+                else:
+                    # Potential duplicate
+                    id_statut = Demande.ID_VERIF_REQUISE
+                    potential_duplicate = existing_client
+                    client = Client.objects.create(phone=phone, **client_data)
+            else:
+                # New client
+                client = Client.objects.create(phone=phone, **client_data)
 
-        demande = Demande.objects.create(
-            client=client,
-            promo_code=promo_code,
-            source=Demande.SITE,
-            mode_paiement=Demande.VIREMENT,
-            statut=Demande.EN_ATTENTE,
-            identification_statut=id_statut,
-            potential_duplicate_client=potential_duplicate,
-            **validated_data
-        )
-        return demande
+            # Automate segmentation
+            service = validated_data.get('service')
+            segment_provided = 'segment' in self.initial_data
+            
+            if service and not segment_provided:
+                segment = get_segment_from_service(service)
+                validated_data['segment'] = segment
+
+            # Sync client segment & Ownership
+            if client:
+                if 'segment' in validated_data:
+                    client.segment = validated_data['segment']
+                if not client.assigned_commercial and validated_data.get('assigned_to'):
+                    client.assigned_commercial = validated_data['assigned_to']
+                client.save()
+
+            # Enforce full server-side V3.2 validation on promo_code if provided
+            resolved_promo = None
+            if promo_input is not None:
+                booking_city = client_data.get('city') or ''
+                if not booking_city and isinstance(form_data, dict):
+                    booking_city = form_data.get('ville') or form_data.get('city') or ''
+
+                booking_amount = None
+                if isinstance(form_data, dict):
+                    for amount_key in ('originalPrice', 'montant_avant_remise', 'subtotal'):
+                        if form_data.get(amount_key) not in (None, ''):
+                            booking_amount = form_data.get(amount_key)
+                            break
+                if booking_amount is None and not validated_data.get('is_devis'):
+                    booking_amount = validated_data.get('prix')
+
+                promo_result = validate_promo_for_booking(
+                    promo_input,
+                    segment=validated_data.get('segment', ''),
+                    service=validated_data.get('service', ''),
+                    phone=phone,
+                    city=booking_city,
+                    booking_mode=validated_data.get('frequency', ''),
+                    order_amount=booking_amount,
+                    client=client,
+                )
+                if not promo_result["valid"]:
+                    raise serializers.ValidationError({
+                        "promo_code": promo_result["message"]
+                    })
+                resolved_promo = promo_result["promo"]
+
+            demande = Demande.objects.create(
+                client=client,
+                promo_code=resolved_promo,
+                source=Demande.SITE,
+                mode_paiement=Demande.VIREMENT,
+                statut=Demande.EN_ATTENTE,
+                identification_statut=id_statut,
+                potential_duplicate_client=potential_duplicate,
+                **validated_data
+            )
+            return demande
 
 
 class AuditLogSerializer(serializers.ModelSerializer):
@@ -1570,3 +1600,108 @@ class FeteReligieuseSerializer(serializers.ModelSerializer):
             'majoration_pourcentage',
             'debut_suspension', 'fin_suspension',
         ]
+
+
+class PublicContactLeadCreateSerializer(serializers.ModelSerializer):
+    """Serializer public (sans auth) pour enregistrer un lead / prise de contact depuis le site web."""
+
+    class Meta:
+        model = ContactLead
+        fields = [
+            'segment', 'channel', 'entity_name', 'contact_name',
+            'phone', 'email', 'city', 'service', 'notes',
+            'source_page', 'landing_url',
+            'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid',
+        ]
+
+    def to_internal_value(self, data):
+        data = data.copy() if hasattr(data, 'copy') else dict(data)
+        max_len_caps = {
+            'source_page': 150,
+            'landing_url': 500,
+            'utm_source': 150,
+            'utm_medium': 150,
+            'utm_campaign': 150,
+            'utm_content': 150,
+            'utm_term': 150,
+            'gclid': 255,
+        }
+        for field_name, max_len in max_len_caps.items():
+            val = data.get(field_name)
+            if isinstance(val, str) and len(val) > max_len:
+                data[field_name] = val[:max_len]
+        return super().to_internal_value(data)
+
+    def validate(self, attrs):
+        for key, value in list(attrs.items()):
+            if isinstance(value, str):
+                attrs[key] = value.strip()
+
+        if not attrs.get('entity_name'):
+            raise serializers.ValidationError({'entity_name': 'Le nom ou l’entreprise est obligatoire.'})
+        if not attrs.get('phone'):
+            raise serializers.ValidationError({'phone': 'Le numéro de téléphone est obligatoire.'})
+
+        channel = attrs.get('channel') or ContactLead.CHANNEL_B2B_MODAL
+        attrs['channel'] = channel
+        if channel == ContactLead.CHANNEL_B2B_MODAL and not attrs.get('city'):
+            raise serializers.ValidationError({'city': 'La ville ou les sites sont obligatoires.'})
+
+        return attrs
+
+    def create(self, validated_data):
+        lead = ContactLead.objects.create(**validated_data)
+        try:
+            AppNotification.objects.create(
+                type='info',
+                title=f"Nouveau lead : {lead.entity_name}",
+                message=f"{lead.service or 'Demande de contact'} — {lead.city or 'Ville non précisée'} ({lead.phone})",
+                lien_url='/leads',
+                target_roles=['admin', 'moderateur', 'responsable_commercial', 'commercial'],
+            )
+        except Exception:
+            pass
+        return lead
+
+
+class ContactLeadSerializer(serializers.ModelSerializer):
+    """Serializer complet back-office pour la gestion des Leads & Contacts."""
+    assigned_to_name = serializers.SerializerMethodField()
+    converted_by_name = serializers.SerializerMethodField()
+    converted_demande_statut = serializers.SerializerMethodField()
+    statut_display = serializers.CharField(source='get_statut_display', read_only=True)
+    channel_display = serializers.CharField(source='get_channel_display', read_only=True)
+
+    class Meta:
+        model = ContactLead
+        fields = [
+            'id', 'segment', 'channel', 'channel_display',
+            'entity_name', 'contact_name', 'phone', 'email', 'city', 'service', 'notes',
+            'statut', 'statut_display', 'commercial_notes',
+            'source_page', 'landing_url',
+            'utm_source', 'utm_medium', 'utm_campaign', 'utm_content', 'utm_term', 'gclid',
+            'assigned_to', 'assigned_to_name',
+            'converted_demande', 'converted_demande_statut',
+            'converted_at', 'converted_by', 'converted_by_name',
+            'created_at', 'updated_at',
+        ]
+        read_only_fields = [
+            'id', 'converted_demande', 'converted_at', 'converted_by', 'created_at', 'updated_at',
+        ]
+
+    def get_assigned_to_name(self, obj):
+        return getattr(obj.assigned_to, 'full_name', None) if obj.assigned_to else None
+
+    def get_converted_by_name(self, obj):
+        return getattr(obj.converted_by, 'full_name', None) if obj.converted_by else None
+
+    def get_converted_demande_statut(self, obj):
+        return obj.converted_demande.statut if obj.converted_demande else None
+
+    def validate_statut(self, value):
+        if value == ContactLead.CONVERTI:
+            if not (self.instance and self.instance.converted_demande_id):
+                raise serializers.ValidationError(
+                    "Utilisez l'action de conversion pour passer un lead au statut « Converti en demande »."
+                )
+        return value
