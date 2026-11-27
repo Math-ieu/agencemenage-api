@@ -470,27 +470,29 @@ class SecurityP0RbacMediaPublicAirbnbTests(APITestCase):
         )
 
         anon = APIClient()
-        # Public prefix allowed without auth + security headers
+        # Client-facing documents & profile photos are publicly accessible with security headers
         pub_resp = anon.get('/api/media/agents/photos/avatar.png')
         self.assertEqual(pub_resp.status_code, 200)
         self.assertEqual(pub_resp['X-Content-Type-Options'], 'nosniff')
         self.assertIn('sandbox', pub_resp['Content-Security-Policy'])
+
+        fac_resp = anon.get('/api/media/factures/FAC-SOL-1.pdf')
+        self.assertEqual(fac_resp.status_code, 200)
+        self.assertEqual(fac_resp['X-Content-Type-Options'], 'nosniff')
 
         # SVG served as attachment
         svg_resp = anon.get('/api/media/agents/photos/bad.svg')
         self.assertEqual(svg_resp.status_code, 200)
         self.assertTrue(svg_resp['Content-Disposition'].startswith('attachment'))
 
-        # Private paths blocked without auth / sig
+        # Strictly internal HR/accounting paths remain blocked without auth / sig
         self.assertIn(anon.get('/api/media/agents/cin/cin.png').status_code, (401, 403))
-        self.assertIn(anon.get('/api/media/factures/FAC-SOL-1.pdf').status_code, (401, 403))
         self.assertIn(anon.get('/api/media/agents/cin/cin.png?sig=tampered').status_code, (401, 403))
 
-        # Other client conciergerie authenticated with real JWT cannot read another client's PDF or CIN
+        # External client conciergerie still cannot read internal employee CIN
         oasis_token = str(RefreshToken.for_user(self.conciergerie_user).access_token)
         oasis_client = APIClient()
         oasis_client.credentials(HTTP_AUTHORIZATION=f'Bearer {oasis_token}')
-        self.assertEqual(oasis_client.get('/api/media/factures/FAC-SOL-1.pdf').status_code, 403)
         self.assertEqual(oasis_client.get('/api/media/agents/cin/cin.png').status_code, 403)
         self.assertEqual(oasis_client.get('/api/media/factures/FAC-OASIS-1.pdf').status_code, 200)
 

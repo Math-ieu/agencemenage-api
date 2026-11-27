@@ -15,7 +15,13 @@ from agencemenage.media_signing import verify_media_signature
 
 logger = logging.getLogger(__name__)
 
-PUBLIC_MEDIA_PREFIXES = ('blog/', 'agents/photos/')
+PUBLIC_MEDIA_PREFIXES = (
+    'blog/',
+    'agents/photos/',
+    'documents/',
+    'factures/',
+    'airbnb/',
+)
 
 DANGEROUS_INLINE_MIMES = {
     'text/html',
@@ -33,9 +39,10 @@ DANGEROUS_EXTENSIONS = {'.svg', '.svgz', '.html', '.htm', '.xhtml', '.js', '.mjs
 class MediaFileView(APIView):
     """
     Sert les fichiers stockés dans le backend de stockage (S3 / local).
-    - Préfixes publics (`blog/`, `agents/photos/`) accessibles sans auth.
-    - Préfixes privés (`factures/`, `agents/cin/`, `documents/`, `airbnb/`, etc.) protégés
-      par authentification JWT (cookie/Bearer) + contrôle RBAC ou signature HMAC temporaire (`?sig=`).
+    - Préfixes publics (`blog/`, `agents/photos/`, `documents/`, `factures/`, `airbnb/`)
+      accessibles directement sans authentification (documents et cartes envoyés aux clients).
+    - Préfixes internes sensibles (`agents/cin/`, `agents/fiches_antropometriques/`,
+      `agents/attestations/`, `finance/`, `missions/`) protégés par JWT + RBAC ou signature HMAC.
     """
 
     permission_classes = [AllowAny]
@@ -65,25 +72,10 @@ class MediaFileView(APIView):
             'agents/cin/',
             'agents/fiches_antropometriques/',
             'agents/attestations/',
-            'documents/',
             'finance/',
             'missions/',
         )):
             if role in AIRBNB_ONLY_ROLES:
-                return Response({'detail': 'Accès refusé.'}, status=status.HTTP_403_FORBIDDEN)
-            return None
-
-        if file_path.startswith('factures/'):
-            if role in ('runner', 'responsable_linge'):
-                return Response({'detail': 'Accès refusé.'}, status=status.HTTP_403_FORBIDDEN)
-            if role == 'client_conciergerie':
-                from finance.models import Facture
-                if not user.client_id or not Facture.objects.filter(client_id=user.client_id, pdf_file=file_path).exists():
-                    return Response({'detail': 'Accès refusé.'}, status=status.HTTP_403_FORBIDDEN)
-            return None
-
-        if file_path.startswith('airbnb/fiches_mission/'):
-            if role in ('client_conciergerie', 'responsable_linge'):
                 return Response({'detail': 'Accès refusé.'}, status=status.HTTP_403_FORBIDDEN)
             return None
 
