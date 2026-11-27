@@ -290,7 +290,8 @@ def compter_runner(
 
     filet.comptage_runner = normalized or comptage_runner
     if photo_ramassage:
-        filet.photo_ramassage = photo_ramassage
+        from .url_validators import validate_safe_media_url
+        filet.photo_ramassage = validate_safe_media_url(photo_ramassage, 'photo_ramassage')
     filet.remplissage_pct = int(remplissage_pct or 50)
     filet.necessite_second_filet = bool(necessite_second_filet or filet.remplissage_pct > (cfg.remplissage_max_filet_pct or 60))
     filet.total_pieces = calc['total_pieces']

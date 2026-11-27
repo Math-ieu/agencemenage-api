@@ -2,7 +2,9 @@ import json
 import logging
 import urllib.request
 import urllib.error
+from urllib.parse import urlsplit
 from django.conf import settings
+from agencemenage.media_signing import sign_media_url
 
 logger = logging.getLogger(__name__)
 
@@ -33,11 +35,12 @@ class WhatsAppService:
         }
 
         if media_url:
-            filename = media_url.split('/')[-1]
+            filename = urlsplit(media_url).path.rstrip('/').split('/')[-1] or 'document'
+            signed_media_url = sign_media_url(media_url)
             header_param = {
                 "type": media_type,
                 media_type: {
-                    "link": media_url
+                    "link": signed_media_url
                 }
             }
             if media_type == 'document':

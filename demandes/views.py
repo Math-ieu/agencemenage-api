@@ -250,10 +250,10 @@ class DemandeViewSet(viewsets.ModelViewSet):
             logger.warning(f"Auto feedback WA skipped: No commercial phone found for demande {demande.id}")
             return
 
-        from agencemenage.utils import encode_id
-        target_id_for_link = demande.parent_demande if (is_abonnement and demande.parent_demande) else demande.id
-        encoded_id = encode_id(target_id_for_link)
-        feedback_link = f"https://feedback.agencemenage.ma/feedback/{encoded_id}"
+        from agencemenage.utils import generate_feedback_token
+        target_id_for_link = demande.parent_demande_id if (is_abonnement and demande.parent_demande_id) else demande.id
+        feedback_token = generate_feedback_token(target_id_for_link)
+        feedback_link = f"https://feedback.agencemenage.ma/feedback/{feedback_token}"
         vars = [client_name, feedback_link]
 
         try:
@@ -344,13 +344,14 @@ class DemandeViewSet(viewsets.ModelViewSet):
         paiement_display_map = dict(Demande.PAIEMENT_STATUT_CHOICES)
         segment_display_map = dict(Demande.SEGMENT_CHOICES)
 
+        from agencemenage.utils import sanitize_csv_cell
         for d in queryset:
             client_name = d.client.display_name if d.client else ''
             profile = d.profils_envoyes.order_by('id').first()
             profil_name = profile.full_name if profile else ''
             motif = d.avis_annulation if d.statut == Demande.ANNULE else ''
 
-            writer.writerow([
+            writer.writerow([sanitize_csv_cell(c) for c in [
                 f'#{d.id}',
                 d.created_at.strftime('%d/%m/%Y') if d.created_at else '',
                 client_name,
@@ -360,7 +361,7 @@ class DemandeViewSet(viewsets.ModelViewSet):
                 statut_display_map.get(d.statut, d.statut or ''),
                 paiement_display_map.get(d.statut_paiement, d.statut_paiement or ''),
                 motif,
-            ])
+            ]])
 
         return response
 
@@ -819,7 +820,13 @@ class DemandeViewSet(viewsets.ModelViewSet):
         if doc_type in ['devis', 'png', 'facture']:
             # Priorité 1 : URL fournie par le frontend (document fraîchement uploadé)
             if frontend_media_url:
-                media_url = frontend_media_url
+                api_base = str(getattr(settings, 'API_BASE_URL', '') or '').rstrip('/')
+                allowed_media_prefixes = ('/api/media/',)
+                if api_base:
+                    allowed_media_prefixes = (f"{api_base}/api/media/", f"{api_base}/media/", '/api/media/')
+                if not isinstance(frontend_media_url, str) or not frontend_media_url.strip().startswith(allowed_media_prefixes):
+                    return Response({'error': 'URL de média non autorisée.'}, status=400)
+                media_url = frontend_media_url.strip()
                 logger.info(f"WhatsApp: Using frontend-provided media_url: {media_url}")
             else:
                 # Priorité 2 : Construire l'URL depuis le dernier document en base
@@ -1022,9 +1029,10 @@ class DemandeViewSet(viewsets.ModelViewSet):
             
         elif doc_type == 'feedback':
             template = 'demande_feedback_client_v1'
-            from agencemenage.utils import encode_id
-            encoded_id = encode_id(demande.id)
-            feedback_link = f"https://feedback.agencemenage.ma/feedback/{encoded_id}"
+            from agencemenage.utils import generate_feedback_token
+            target_id_for_link = demande.parent_demande_id or demande.id
+            feedback_token = generate_feedback_token(target_id_for_link)
+            feedback_link = f"https://feedback.agencemenage.ma/feedback/{feedback_token}"
             vars = [client_name, feedback_link]
         else:
             return Response({'error': f"Type non supporté : {doc_type}"}, status=400)
@@ -1963,6 +1971,7 @@ class PublicDemandeCreateView(viewsets.GenericViewSet):
     """Endpoint public pour créer une demande depuis le site web."""
     permission_classes = [AllowAny]
     serializer_class = PublicDemandeCreateSerializer
+    throttle_scope = 'public_write'
 
     def create(self, request):
         serializer = self.get_serializer(data=request.data)
@@ -1993,6 +2002,14 @@ class AppNotificationViewSet(viewsets.ModelViewSet):
     queryset = AppNotification.objects.all()
     serializer_class = AppNotificationSerializer
     permission_classes = [IsAuthenticated, RoleBasedPermission]
+
+    def get_serializer_class(self):
+        from .serializers import AppNotificationUpdateSerializer
+        if self.action in ('update', 'partial_update'):
+            user = getattr(self.request, 'user', None)
+            if not user or getattr(user, 'role', None) != 'admin':
+                return AppNotificationUpdateSerializer
+        return AppNotificationSerializer
 
     def get_queryset(self):
         user = self.request.user
@@ -2666,6 +2683,7 @@ class PublicContactLeadCreateView(viewsets.GenericViewSet):
     """Endpoint public (sans auth) pour enregistrer un lead / contact depuis le site web."""
     permission_classes = [AllowAny]
     serializer_class = PublicContactLeadCreateSerializer
+    throttle_scope = 'public_write'
 
     def create(self, request):
         serializer = self.get_serializer(data=request.data)

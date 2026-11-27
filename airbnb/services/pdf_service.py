@@ -382,7 +382,7 @@ def generate_and_save_facture_pdf(facture) -> bytes:
     """Génère le PDF de la facture et le sauvegarde sur facture.pdf_file si possible."""
     pdf_bytes = generate_facture_airbnb_pdf(facture)
     try:
-        facture.pdf_file.save(f"{facture.numero}.pdf", ContentFile(pdf_bytes), save=True)
+        facture.pdf_file.save(f"{facture.numero}_{uuid.uuid4().hex[:12]}.pdf", ContentFile(pdf_bytes), save=True)
     except Exception:
         pass
     return pdf_bytes

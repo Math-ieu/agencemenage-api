@@ -136,10 +136,11 @@ def validate_promo_for_booking(
         return _fail(400, "expired", "Ce code promo a expiré.")
 
     # Segment check
-    if promo.segment != 'tous' and segment:
-        if promo.segment == 'particulier' and segment != 'particulier':
+    if promo.segment != 'tous':
+        norm_seg = segment.lower()
+        if promo.segment == 'particulier' and norm_seg != 'particulier':
             return _fail(400, "segment_ineligible", "Ce code promo est réservé aux particuliers.")
-        elif promo.segment == 'entreprise' and segment != 'entreprise':
+        elif promo.segment == 'entreprise' and norm_seg != 'entreprise':
             return _fail(400, "segment_ineligible", "Ce code promo est réservé aux entreprises.")
 
     # Service check

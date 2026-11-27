@@ -17,8 +17,12 @@ class EmailOrUsernameModelBackend(ModelBackend):
                 Q(email__iexact=username) | Q(username__iexact=username)
             ).first()
         except UserModel.DoesNotExist:
+            UserModel().set_password(password or '')
             return None
-        
+
         if user and user.check_password(password) and self.user_can_authenticate(user):
             return user
+        if not user:
+            # Exécute un hachage factice pour atténuer l'énumération temporelle des comptes
+            UserModel().set_password(password or '')
         return None

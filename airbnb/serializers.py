@@ -1,4 +1,6 @@
+from django.core.files.uploadedfile import UploadedFile
 from rest_framework import serializers
+from agencemenage.validators import validate_uploaded_image
 from clients.models import Client
 from agents.models import Agent
 from accounts.models import User
@@ -173,7 +175,28 @@ class BienDetailSerializer(serializers.ModelSerializer):
     def get_is_seuil_conciergerie(self, obj):
         return self.get_total_biens_client(obj) >= 3
 
+    def validate_photo_principale(self, value):
+        if isinstance(value, UploadedFile):
+            return validate_uploaded_image(value)
+        return value
+
+    def validate_photo_acces(self, value):
+        if isinstance(value, UploadedFile):
+            return validate_uploaded_image(value)
+        return value
+
     def validate(self, attrs):
+        role = _get_request_role(self)
+        if role == 'client_conciergerie':
+            if self.instance:
+                for field_name in ('zone_eloignee', 'statut_activation', 'is_active', 'client'):
+                    if field_name in attrs:
+                        attrs.pop(field_name, None)
+            else:
+                attrs.pop('zone_eloignee', None)
+                attrs['statut_activation'] = 'en_validation'
+                attrs['is_active'] = False
+
         if self.instance and 'code' in attrs:
             incoming_code = (attrs.get('code') or '').strip()
             if incoming_code and incoming_code != self.instance.code:

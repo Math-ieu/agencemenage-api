@@ -19,8 +19,7 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
         return super().get_queryset().select_related('client', 'cree_par', 'demande')
 
     def perform_create(self, serializer):
-        cree_par = serializer.validated_data.get('cree_par') or self.request.user
-        instance = serializer.save(cree_par=cree_par)
+        instance = serializer.save(cree_par=self.request.user)
         # Link client if missing but demande is there
         if instance.demande and not instance.client:
             instance.client = instance.demande.client
@@ -86,7 +85,7 @@ class CommercialGestureViewSet(viewsets.ModelViewSet):
                 current_price = dem.prix or Decimal(0)
                 reduction_value = Decimal(instance.reduction_value or 0)
                 if instance.reduction_type == 'pourcentage':
-                    new_price = current_price * (Decimal(1) - reduction_value / Decimal(100))
+                    new_price = max(Decimal(0), current_price * (Decimal(1) - reduction_value / Decimal(100)))
                 else:
                     new_price = max(Decimal(0), current_price - reduction_value)
                 dem.prix = new_price
@@ -300,6 +299,7 @@ from .validators import validate_promo_for_booking
 class PublicPromoCodeValidateView(APIView):
     permission_classes = [AllowAny]
     authentication_classes = []
+    throttle_scope = 'public_promo_validate'
 
     def post(self, request, *args, **kwargs):
         if not isinstance(request.data, dict):

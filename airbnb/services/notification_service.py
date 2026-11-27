@@ -1,3 +1,4 @@
+import html as html_lib
 import logging
 from django.conf import settings
 from django.utils import timezone
@@ -104,12 +105,20 @@ def _send_email(to_email: str, subject: str, html_body: str):
         return False
     if not getattr(settings, 'RESEND_API_KEY', None):
         return False
+    clean_subject = ' '.join(str(subject or '').replace('\r', ' ').replace('\n', ' ').split())
     try:
-        html_doc = get_base_html_template(subject, html_body)
-        return send_resend_email(to_email.strip(), subject, html_doc)
+        html_doc = get_base_html_template(clean_subject, html_body)
+        return send_resend_email(to_email.strip(), clean_subject, html_doc)
     except Exception as exc:
-        logger.warning("Échec envoi email Resend (%s -> %s): %s", subject, to_email, exc)
+        logger.warning("Échec envoi email Resend (%s -> %s): %s", clean_subject, to_email, exc)
         return False
+
+
+def _safe_client_email_html(client, msg: str, extra_paragraph: str = '') -> str:
+    safe_name = html_lib.escape(str(client.display_name or ''))
+    safe_msg = html_lib.escape(str(msg or '')).replace('\n', '<br>')
+    extra = f"<p>{html_lib.escape(extra_paragraph)}</p>" if extra_paragraph else ""
+    return f"<p>Bonjour {safe_name},</p><p>{safe_msg}</p>{extra}"
 
 
 def _notify_client_portal_users(client, notif_type: str, title: str, message: str, commande_airbnb=None, lien_url: str = ''):
@@ -150,7 +159,11 @@ def notify_depart_ical_detecte(bien, commandes: list):
         _send_email(
             client.email,
             title,
-            f"<p>Bonjour {client.display_name},</p><p>{msg}</p><p>Connectez-vous à votre espace conciergerie pour confirmer.</p>",
+            _safe_client_email_html(
+                client,
+                msg,
+                "Connectez-vous à votre espace conciergerie pour confirmer.",
+            ),
         )
 
 
@@ -312,7 +325,7 @@ def notify_signalement_client(signalement):
     _notify_client_portal_users(client, 'airbnb_incident', title, msg, commande_airbnb=cmd, lien_url='/airbnb/portail')
     _send_whatsapp(_client_whatsapp_phone(client), 'signalement_client', variables=[cmd.numero, cmd.bien.code, signalement.get_motif_display()])
     if client.email:
-        _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+        _send_email(client.email, title, _safe_client_email_html(client, msg))
 
 
 def notify_remise_en_etat_client(commande, heures_estimees=0):
@@ -327,7 +340,7 @@ def notify_remise_en_etat_client(commande, heures_estimees=0):
     _notify_client_portal_users(client, 'airbnb_incident', title, msg, commande_airbnb=commande, lien_url='/airbnb/portail')
     _send_whatsapp(_client_whatsapp_phone(client), 'remise_etat_client', variables=[commande.numero, commande.bien.code, str(heures_estimees)])
     if client.email:
-        _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+        _send_email(client.email, title, _safe_client_email_html(client, msg))
 
 
 # ─── 8, 9, 10. Relances exécution (2h, fin de journée, J+1) ─────────────────
@@ -414,7 +427,7 @@ def notify_linge_abime_client(observation, custom_message: str = ''):
     _notify_client_portal_users(client, 'airbnb_ecart_linge', title, msg, commande_airbnb=filet.commande_ramassage, lien_url='/airbnb/portail')
     _send_whatsapp(_client_whatsapp_phone(client), 'linge_abime_client', variables=[filet.bien.code, observation.article, msg])
     if client.email:
-        _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+        _send_email(client.email, title, _safe_client_email_html(client, msg))
 
 
 def notify_filet_non_pret(filet, commande_depot=None):
@@ -438,7 +451,7 @@ def notify_cloture_commande(commande):
         _notify_client_portal_users(client, 'airbnb_commande', title, msg, commande_airbnb=commande, lien_url='/airbnb/portail')
         _send_whatsapp(_client_whatsapp_phone(client), 'cloture_client', variables=[commande.numero, commande.bien.code])
         if client.email:
-            _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+            _send_email(client.email, title, _safe_client_email_html(client, msg))
     if commercial:
         _create_app_notification('airbnb_commande', title, msg, target_user=commercial, commande_airbnb=commande, lien_url=f'/airbnb/commandes/{commande.id}')
 
@@ -482,7 +495,7 @@ def notify_objet_trouve_client(objet):
     _notify_client_portal_users(client, 'airbnb_incident', title, msg, commande_airbnb=objet.commande, lien_url='/airbnb/portail')
     _send_whatsapp(_client_whatsapp_phone(client), 'objet_trouve_client', variables=[objet.bien.code, objet.description], media_url=objet.photo_url or None, media_type='image')
     if client.email:
-        _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+        _send_email(client.email, title, _safe_client_email_html(client, msg))
 
 
 def notify_objet_trouve_relance(objet, jalon: str):
@@ -504,7 +517,7 @@ def notify_facture_emise(facture):
     _notify_client_portal_users(client, 'airbnb_facture', title, msg, lien_url='/airbnb/portail')
     _send_whatsapp(_client_whatsapp_phone(client), 'facture_emise', variables=[facture.numero, str(facture.montant_total), str(facture.date_echeance)])
     if client.email:
-        _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+        _send_email(client.email, title, _safe_client_email_html(client, msg))
 
 
 def notify_rappel_impaye(facture):
@@ -536,7 +549,7 @@ def notify_suspension_client(client, facture, cancelled_orders: list = None):
     _notify_client_portal_users(client, 'airbnb_suspension', title, msg, lien_url='/airbnb/portail')
     _send_whatsapp(_client_whatsapp_phone(client), 'suspension_client', variables=[client.display_name, facture.numero])
     if client.email:
-        _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+        _send_email(client.email, title, _safe_client_email_html(client, msg))
 
     if client.assigned_commercial:
         _create_app_notification('airbnb_suspension', title, msg, target_user=client.assigned_commercial, lien_url='/airbnb/facturation')
@@ -587,7 +600,7 @@ def notify_reclassement_preavis(client):
     _notify_client_portal_users(client, 'airbnb_seuil', title, msg, lien_url='/airbnb/portail')
     _send_whatsapp(_client_whatsapp_phone(client), 'reclassement_preavis', variables=[client.display_name])
     if client.email:
-        _send_email(client.email, title, f"<p>Bonjour {client.display_name},</p><p>{msg}</p>")
+        _send_email(client.email, title, _safe_client_email_html(client, msg))
     if client.assigned_commercial:
         _create_app_notification('airbnb_seuil', title, msg, target_user=client.assigned_commercial, lien_url='/airbnb/biens')
     _create_app_notification('airbnb_seuil', title, msg, target_roles=['responsable_commercial'], lien_url='/airbnb/biens')

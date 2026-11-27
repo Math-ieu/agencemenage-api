@@ -65,6 +65,22 @@ class CommercialGestureSerializer(serializers.ModelSerializer):
     class Meta:
         model = CommercialGesture
         fields = '__all__'
+        read_only_fields = ['cree_par']
+
+    def validate_part_profil(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("La part profil ne peut pas être négative.")
+        return value
+
+    def validate(self, attrs):
+        reduction_type = attrs.get('reduction_type', getattr(self.instance, 'reduction_type', None))
+        reduction_value = attrs.get('reduction_value', getattr(self.instance, 'reduction_value', None))
+        if reduction_value is not None:
+            if reduction_value < 0:
+                raise serializers.ValidationError({'reduction_value': "La réduction ne peut pas être négative."})
+            if reduction_type == 'pourcentage' and reduction_value > 100:
+                raise serializers.ValidationError({'reduction_value': "Une réduction en pourcentage ne peut pas dépasser 100 %."})
+        return attrs
 
 
 class CampaignSerializer(serializers.ModelSerializer):

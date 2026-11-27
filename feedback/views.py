@@ -1,8 +1,8 @@
-from rest_framework import viewsets, filters, permissions
+from rest_framework import viewsets, filters, permissions, status
 from django_filters.rest_framework import DjangoFilterBackend
 from django.db.models import Count, Avg, Q
 from .models import Feedback
-from .serializers import FeedbackSerializer
+from .serializers import FeedbackSerializer, PublicFeedbackCreateSerializer
 from demandes.models import AuditLog, Demande
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -12,11 +12,60 @@ class FeedbackViewSet(viewsets.ModelViewSet):
     queryset = Feedback.objects.select_related('mission', 'client', 'demande').all()
     serializer_class = FeedbackSerializer
 
+    def get_serializer_class(self):
+        if self.action == 'create' and not (self.request.user and self.request.user.is_authenticated):
+            return PublicFeedbackCreateSerializer
+        return FeedbackSerializer
+
+    def get_throttles(self):
+        if self.action == 'validate_token' or (
+            self.action == 'create' and not (self.request.user and self.request.user.is_authenticated)
+        ):
+            self.throttle_scope = 'public_write'
+        elif hasattr(self, 'throttle_scope'):
+            delattr(self, 'throttle_scope')
+        return super().get_throttles()
+
     def get_permissions(self):
         from accounts.permissions import RoleBasedPermission
-        if self.action == 'create':
+        if self.action in ('create', 'validate_token'):
             return [permissions.AllowAny()]
         return [permissions.IsAuthenticated(), RoleBasedPermission()]
+
+    @action(
+        detail=False,
+        methods=['get'],
+        url_path='validate-token',
+        permission_classes=[permissions.AllowAny],
+        authentication_classes=[],
+    )
+    def validate_token(self, request):
+        from agencemenage.utils import verify_feedback_token
+
+        token = (request.query_params.get('token') or '').strip()
+        demande_id = verify_feedback_token(token)
+        if not demande_id:
+            return Response({'valid': False, 'already_submitted': False})
+
+        if not Demande.objects.filter(pk=demande_id).exists():
+            return Response({'valid': False, 'already_submitted': False})
+
+        already_submitted = Feedback.objects.filter(demande_id=demande_id, source='client').exists()
+        return Response({
+            'valid': not already_submitted,
+            'already_submitted': already_submitted,
+        })
+
+    def create(self, request, *args, **kwargs):
+        if request.user and request.user.is_authenticated:
+            return super().create(request, *args, **kwargs)
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        self.perform_create(serializer)
+        return Response(
+            {'status': 'received', 'id': serializer.instance.pk},
+            status=status.HTTP_201_CREATED,
+        )
     filter_backends = [DjangoFilterBackend, filters.OrderingFilter, filters.SearchFilter]
     filterset_fields = ['note_agence', 'note_intervenant']
     search_fields = [
@@ -132,17 +181,21 @@ class FeedbackViewSet(viewsets.ModelViewSet):
 
     def perform_create(self, serializer):
         # Automatically populate client from demande or mission if not provided
+        is_authenticated = bool(self.request.user and self.request.user.is_authenticated)
         demande = serializer.validated_data.get('demande')
-        mission = serializer.validated_data.get('mission')
-        client = serializer.validated_data.get('client')
+        mission = serializer.validated_data.get('mission') if is_authenticated else None
+        client = serializer.validated_data.get('client') if is_authenticated else None
         
         if not client:
             if demande:
                 client = demande.client
             elif mission and mission.demande:
                 client = mission.demande.client
-                
-        feedback = serializer.save(client=client)
+
+        save_kwargs = {'client': client}
+        if not is_authenticated:
+            save_kwargs['source'] = 'client'
+        feedback = serializer.save(**save_kwargs)
 
         # Update client opt-out if requested
         if feedback.opt_out:

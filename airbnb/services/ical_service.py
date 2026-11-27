@@ -1,9 +1,18 @@
+import ipaddress
+import logging
 import re
+import socket
 import urllib.request
 from datetime import date, time
 from decimal import Decimal
+from urllib.parse import urlsplit
 from django.core.exceptions import ValidationError
 from django.utils import timezone
+
+logger = logging.getLogger(__name__)
+
+MAX_ICAL_BYTES = 2 * 1024 * 1024  # 2 Mo
+MAX_ICAL_EVENTS = 500
 
 from ..models import Bien, CommandeAirbnb, FiletLinge, JournalAuditAirbnb
 from .pricing_engine import (
@@ -58,17 +67,90 @@ def parse_ical_content(content: str) -> list:
     return events
 
 
+def _is_public_ip(ip_str: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_str.split('%', 1)[0])
+        if getattr(ip_obj, 'ipv4_mapped', None):
+            ip_obj = ip_obj.ipv4_mapped
+        return (
+            ip_obj.is_global
+            and not ip_obj.is_private
+            and not ip_obj.is_loopback
+            and not ip_obj.is_link_local
+            and not ip_obj.is_multicast
+            and not ip_obj.is_reserved
+            and not ip_obj.is_unspecified
+        )
+    except ValueError:
+        return False
+
+
+def validate_ical_url(ical_url: str) -> str:
+    """Valide une URL iCal contre la SSRF (http/https uniquement, aucune IP privée/interne)."""
+    cleaned = (ical_url or '').strip()
+    if not cleaned:
+        raise ValueError("URL iCal requise.")
+    if any(ord(ch) < 32 for ch in cleaned):
+        raise ValueError("URL iCal invalide.")
+
+    parsed = urlsplit(cleaned)
+    scheme = (parsed.scheme or '').lower()
+    if scheme not in ('http', 'https'):
+        raise ValueError("Seuls les protocoles HTTP et HTTPS sont autorisés pour les flux iCal.")
+    if parsed.username or parsed.password:
+        raise ValueError("Les identifiants intégrés dans l'URL iCal ne sont pas autorisés.")
+    hostname = parsed.hostname
+    if not hostname:
+        raise ValueError("Nom d'hôte manquant dans l'URL iCal.")
+
+    port = parsed.port or (443 if scheme == 'https' else 80)
+    try:
+        addr_infos = socket.getaddrinfo(hostname, port, type=socket.SOCK_STREAM)
+    except socket.gaierror:
+        raise ValueError("Impossible de résoudre le nom d'hôte du flux iCal.")
+
+    if not addr_infos:
+        raise ValueError("Aucune adresse IP trouvée pour le flux iCal.")
+
+    for info in addr_infos:
+        sockaddr = info[4]
+        ip_str = sockaddr[0] if sockaddr else ''
+        if not _is_public_ip(ip_str):
+            raise ValueError("L'URL iCal pointe vers une adresse réseau non autorisée.")
+
+    return cleaned
+
+
+class _SafeRedirectHandler(urllib.request.HTTPRedirectHandler):
+    max_repeats = 3
+    max_redirections = 3
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        validate_ical_url(newurl)
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
 def fetch_and_parse_ical(ical_url: str) -> list:
-    """Télécharge et extrait les événements VEVENT d'un flux iCal."""
+    """Télécharge et extrait les événements VEVENT d'un flux iCal de manière sécurisée (anti-SSRF + taille bornée)."""
+    validated_url = validate_ical_url(ical_url)
     req = urllib.request.Request(
-        ical_url,
+        validated_url,
         headers={'User-Agent': 'AgenceMenage-iCal-Sync/1.0'}
     )
+    opener = urllib.request.build_opener(_SafeRedirectHandler)
     try:
-        with urllib.request.urlopen(req, timeout=15) as response:
-            content = response.read().decode('utf-8', errors='ignore')
+        with opener.open(req, timeout=15) as response:
+            raw_bytes = response.read(MAX_ICAL_BYTES + 1)
+    except ValueError:
+        raise
     except Exception as e:
-        raise ValueError(f"Erreur de connexion au flux iCal : {str(e)}")
+        logger.warning("Erreur de connexion au flux iCal (%s): %s", validated_url, e)
+        raise ValueError("Impossible de récupérer le flux iCal distant.")
+
+    if len(raw_bytes) > MAX_ICAL_BYTES:
+        raise ValueError("Le flux iCal dépasse la taille maximale autorisée (2 Mo).")
+
+    content = raw_bytes.decode('utf-8', errors='ignore')
     return parse_ical_content(content)
 
 
@@ -99,10 +181,17 @@ def sync_bien_ical_turnovers(bien: Bien, ical_content: str = None) -> dict:
     if not bien.ical_url and not ical_content:
         return {'success': False, 'message': "Aucune URL iCal configurée pour ce bien."}
 
+    if ical_content is not None:
+        if not isinstance(ical_content, str) or len(ical_content.encode('utf-8', errors='ignore')) > MAX_ICAL_BYTES:
+            return {'success': False, 'error': "Le contenu iCal dépasse la taille maximale autorisée (2 Mo)."}
+
     try:
         events = parse_ical_content(ical_content) if ical_content is not None else fetch_and_parse_ical(bien.ical_url)
     except Exception as e:
         return {'success': False, 'error': str(e)}
+
+    if len(events) > MAX_ICAL_EVENTS:
+        events = events[:MAX_ICAL_EVENTS]
 
     cfg = get_airbnb_config()
     today = timezone.localdate()

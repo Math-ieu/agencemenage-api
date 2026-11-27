@@ -9,11 +9,14 @@ django.setup()
 from clients.models import Client
 from demandes.models import Demande
 from demandes.constants import get_segment_from_service
+from django.conf import settings
 from django.contrib.auth import get_user_model
 
 User = get_user_model()
 
 def create_pending_demandes():
+    if not settings.DEBUG:
+        raise RuntimeError("Script de démonstration réservé au mode DEBUG=True.")
     print("🚀 Démarrage de la création de demandes en attente...")
     
     # 1. Récupération d'un commercial s'il existe

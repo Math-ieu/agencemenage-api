@@ -123,19 +123,20 @@ class PaiementViewSet(viewsets.ModelViewSet):
     ordering = ['-date']
 
     def perform_create(self, serializer):
-        paiement = serializer.save(created_by=self.request.user)
-        # Update facture statut and montant_paye
-        facture = paiement.facture
-        total_paye = facture.paiements.aggregate(t=Sum('montant'))['t'] or 0
-        facture.montant_paye = total_paye
-        if total_paye >= facture.montant_total:
-            facture.statut = Facture.PAYE
-        elif total_paye > 0:
-            facture.statut = Facture.PARTIEL
-        facture.save()
+        from django.db import transaction
+        with transaction.atomic():
+            paiement = serializer.save(created_by=self.request.user)
+            facture = Facture.objects.select_for_update().get(pk=paiement.facture_id)
+            total_paye = facture.paiements.aggregate(t=Sum('montant'))['t'] or 0
+            facture.montant_paye = total_paye
+            if total_paye >= facture.montant_total:
+                facture.statut = Facture.PAYE
+            elif total_paye > 0:
+                facture.statut = Facture.PARTIEL
+            facture.save()
 
-        if facture.source == Facture.SOURCE_AIRBNB:
-            self._sync_airbnb_caisse_and_suspension(paiement, facture)
+            if facture.source == Facture.SOURCE_AIRBNB:
+                self._sync_airbnb_caisse_and_suspension(paiement, facture)
 
     def _sync_airbnb_caisse_and_suspension(self, paiement, facture):
         if not getattr(paiement, '_skip_caisse_hook', False) and not EntreeCaisse.objects.filter(paiement=paiement).exists():
@@ -289,8 +290,9 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
             'Notes',
         ])
 
+        from agencemenage.utils import sanitize_csv_cell
         for item in queryset:
-            writer.writerow([
+            writer.writerow([sanitize_csv_cell(c) for c in [
                 item.date.strftime('%d/%m/%Y') if item.date else '',
                 item.get_type_mouvement_display(),
                 item.categorie,
@@ -301,6 +303,6 @@ class EntreeCaisseViewSet(viewsets.ModelViewSet):
                 item.utilisateur,
                 item.document_file.url if item.document_file else '',
                 item.notes,
-            ])
+            ]])
 
         return response

@@ -21,6 +21,30 @@ class ClientSerializer(serializers.ModelSerializer):
             data['trigramme'] = None
         return super().to_internal_value(data)
 
+    def validate(self, attrs):
+        request = self.context.get('request') if self.context else None
+        user = getattr(request, 'user', None)
+        role = getattr(user, 'role', None) if user and getattr(user, 'is_authenticated', False) else None
+        privileged_roles = (
+            'admin', 'moderateur', 'responsable_commercial',
+            'responsable_facturation', 'responsable_operations',
+        )
+        if role and role not in privileged_roles:
+            restricted_fields = (
+                'statut_airbnb',
+                'eligible_conciergerie',
+                'probatoire_jusqu_au',
+                'probatoire_bascule_annulee',
+                'mode_paiement_airbnb',
+            )
+            forbidden = [f for f in restricted_fields if f in attrs]
+            if forbidden:
+                raise serializers.ValidationError({
+                    f: "Modification réservée aux responsables Airbnb ou Administrateur."
+                    for f in forbidden
+                })
+        return attrs
+
     def get_demandes_count(self, obj):
         return obj.demandes.filter(parent_demande__isnull=True).count()
 

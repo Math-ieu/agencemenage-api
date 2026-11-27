@@ -20,7 +20,7 @@ class ClientViewSet(viewsets.ModelViewSet):
                     return qs.filter(id=user.client_id)
                 return qs.none()
             if user.role == 'responsable_facturation':
-                return qs
+                return qs.filter(Client.airbnb_client_q()).distinct()
             from accounts.models import RolePermission
             from accounts.permissions import map_role_to_db_key
             db_role = map_role_to_db_key(user.role)

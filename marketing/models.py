@@ -248,10 +248,9 @@ class PromoCode(models.Model):
 
 @receiver(post_save, sender=Demande)
 def increment_promo_code_uses(sender, instance, created, **kwargs):
-    if created and instance.promo_code:
-        promo = instance.promo_code
-        promo.uses += 1
-        promo.save(update_fields=['uses'])
+    if created and instance.promo_code_id:
+        from django.db.models import F
+        PromoCode.objects.filter(pk=instance.promo_code_id).update(uses=F('uses') + 1)
 
 
 class CommercialGesture(models.Model):

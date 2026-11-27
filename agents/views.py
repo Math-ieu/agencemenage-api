@@ -2,7 +2,7 @@ from rest_framework import viewsets, filters
 from django_filters.rest_framework import DjangoFilterBackend
 from rest_framework.permissions import IsAuthenticated, AllowAny
 from .models import Agent, AgentAssignment
-from .serializers import AgentSerializer, AgentListSerializer, AgentAssignmentSerializer
+from .serializers import AgentSerializer, AgentListSerializer, AgentAssignmentSerializer, PublicAgentProfileSerializer
 from .filters import AgentFilter
 from demandes.models import AuditLog, ProfilShare
 from rest_framework.decorators import action
@@ -33,20 +33,6 @@ class AgentViewSet(viewsets.ModelViewSet):
 
     def get_permissions(self):
         from accounts.permissions import RoleBasedPermission
-        if self.action == 'retrieve':
-            lookup_url_kwarg = self.lookup_url_kwarg or self.lookup_field
-            lookup_value = self.kwargs.get(lookup_url_kwarg)
-            
-            # Allow public access ONLY for UUID lookups
-            import uuid
-            try:
-                if lookup_value:
-                    uuid.UUID(str(lookup_value))
-                    return [AllowAny()]
-            except ValueError:
-                # If it's an integer ID, require authentication
-                return [IsAuthenticated(), RoleBasedPermission()]
-                
         if self.action == 'by_share':
             return [AllowAny()]
         return [IsAuthenticated(), RoleBasedPermission()]
@@ -163,9 +149,8 @@ class AgentViewSet(viewsets.ModelViewSet):
         except (ProfilShare.DoesNotExist, ValueError):
             return Response({'error': 'Lien invalide ou expiré'}, status=404)
         
-        serializer = AgentSerializer(share.agent)
-        data = serializer.data
-        data.pop('recruiter_notes', None)
+        serializer = PublicAgentProfileSerializer(share.agent, context={'request': request})
+        data = dict(serializer.data)
         data['demande_context'] = {
             'service': share.demande.service,
             'client_name': share.demande.client.display_name if share.demande.client else 'Inconnu'

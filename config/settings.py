@@ -3,14 +3,25 @@ Django settings for agencemenage-api project.
 """
 from datetime import timedelta
 from pathlib import Path
-from decouple import config
+from decouple import Csv, config
+from django.core.exceptions import ImproperlyConfigured
 import dj_database_url
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = config('SECRET_KEY', default='django-insecure-changeme')
-DEBUG = config('DEBUG', default=True, cast=bool)
-ALLOWED_HOSTS = config('ALLOWED_HOSTS', default='localhost,127.0.0.1,testserver,.railway.app,api.agencemenage.ma').split(',')
+# True en local (.env), False en production (défaut sécurisé)
+DEBUG = config('DEBUG', default=False, cast=bool)
+if not DEBUG and (not SECRET_KEY or SECRET_KEY == 'django-insecure-changeme' or len(SECRET_KEY) < 32):
+    raise ImproperlyConfigured("SECRET_KEY sécurisée (>= 32 caractères) requise lorsque DEBUG=False.")
+
+ALLOWED_HOSTS = [
+    h for h in config(
+        'ALLOWED_HOSTS',
+        default='localhost,127.0.0.1,testserver,api.agencemenage.ma' if DEBUG else 'api.agencemenage.ma',
+        cast=Csv(),
+    ) if h
+]
 
 # Application definition
 INSTALLED_APPS = [
@@ -24,6 +35,7 @@ INSTALLED_APPS = [
     # Third-party
     'rest_framework',
     'rest_framework_simplejwt',
+    'rest_framework_simplejwt.token_blacklist',
     'corsheaders',
     'django_filters',
     'drf_spectacular',
@@ -52,6 +64,7 @@ MIDDLEWARE = [
     'django.middleware.csrf.CsrfViewMiddleware',
     'django.contrib.auth.middleware.AuthenticationMiddleware',
     'django.contrib.messages.middleware.MessageMiddleware',
+    'django.middleware.clickjacking.XFrameOptionsMiddleware',
     'config.middleware.CurrentUserMiddleware',
 ]
 
@@ -74,7 +87,6 @@ TEMPLATES = [
 
 WSGI_APPLICATION = 'config.wsgi.application'
 
-# Database — PostgreSQL in production, SQLite fallback for dev
 # Database — PostgreSQL in production (Railway DATABASE_URL), SQLite fallback for dev
 DATABASES = {
     'default': dj_database_url.config(
@@ -127,7 +139,6 @@ if AWS_STORAGE_BUCKET_NAME:
     MEDIA_URL = '/api/media/'
 else:
     if not DEBUG:
-        from django.core.exceptions import ImproperlyConfigured
         raise ImproperlyConfigured(
             "AWS_STORAGE_BUCKET_NAME est requis en production pour éviter le stockage local."
         )
@@ -161,6 +172,20 @@ REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'config.pagination.CustomPagination',
     'PAGE_SIZE': 20,
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
+    'DEFAULT_THROTTLE_CLASSES': [
+        'rest_framework.throttling.AnonRateThrottle',
+        'rest_framework.throttling.UserRateThrottle',
+        'rest_framework.throttling.ScopedRateThrottle',
+    ],
+    'DEFAULT_THROTTLE_RATES': {
+        'anon': config('THROTTLE_ANON', default='120/min'),
+        'user': config('THROTTLE_USER', default='600/min'),
+        'auth_login': config('THROTTLE_AUTH_LOGIN', default='15/min'),
+        'auth_forgot_password': config('THROTTLE_AUTH_FORGOT', default='5/hour'),
+        'auth_reset_password': config('THROTTLE_AUTH_RESET', default='10/hour'),
+        'public_write': config('THROTTLE_PUBLIC_WRITE', default='60/min'),
+        'public_promo_validate': config('THROTTLE_PUBLIC_PROMO', default='60/min'),
+    },
 }
 
 # ─── JWT ──────────────────────────────────────────────────────────────────
@@ -168,30 +193,47 @@ SIMPLE_JWT = {
     'ACCESS_TOKEN_LIFETIME': timedelta(minutes=config('JWT_ACCESS_TOKEN_LIFETIME_MINUTES', default=60, cast=int)),
     'REFRESH_TOKEN_LIFETIME': timedelta(days=config('JWT_REFRESH_TOKEN_LIFETIME_DAYS', default=7, cast=int)),
     'ROTATE_REFRESH_TOKENS': True,
-    'BLACKLIST_AFTER_ROTATION': False,
+    'BLACKLIST_AFTER_ROTATION': True,
     'AUTH_HEADER_TYPES': ('Bearer',),
 }
 
-# ─── Auth Cookies ─────────────────────────────────────────────────────────────
+# ─── Auth Cookies & HTTP Security ─────────────────────────────────────────────
 AUTH_COOKIE_SECURE = not DEBUG
 AUTH_COOKIE_HTTP_ONLY = True
-AUTH_COOKIE_SAMESITE = 'None' if not DEBUG else 'Lax'
+AUTH_COOKIE_SAMESITE = config('AUTH_COOKIE_SAMESITE', default='Lax')
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = 'Lax'
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = False
+CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
 
-# ─── CORS ─────────────────────────────────────────────────────────────────
+X_FRAME_OPTIONS = 'DENY'
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = 'strict-origin-when-cross-origin'
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https') if not DEBUG else None
+SECURE_SSL_REDIRECT = config('SECURE_SSL_REDIRECT', default=not DEBUG, cast=bool)
+SECURE_HSTS_SECONDS = config('SECURE_HSTS_SECONDS', default=0 if DEBUG else 31536000, cast=int)
+SECURE_HSTS_INCLUDE_SUBDOMAINS = not DEBUG
+
+# ─── CORS & CSRF ──────────────────────────────────────────────────────────
+_PROD_ORIGINS = (
+    'https://agencemenage.ma,https://www.agencemenage.ma,'
+    'https://app.agencemenage.ma,https://profil.agencemenage.ma,'
+    'https://feedback.agencemenage.ma'
+)
+_DEFAULT_ORIGINS = (
+    f'http://localhost:3000,http://localhost:5173,http://localhost:5174,http://localhost:8080,{_PROD_ORIGINS}'
+    if DEBUG else _PROD_ORIGINS
+)
+
 CORS_ALLOWED_ORIGINS = [
-    origin.rstrip('/') for origin in config(
-        'CORS_ALLOWED_ORIGINS',
-        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://agencemenage.ma,https://www.agencemenage.ma,https://app.agencemenage.ma,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
-    ).split(',') if origin
+    o.rstrip('/') for o in config('CORS_ALLOWED_ORIGINS', default=_DEFAULT_ORIGINS, cast=Csv()) if o
 ]
-
 CORS_ALLOW_CREDENTIALS = True
 
 CSRF_TRUSTED_ORIGINS = [
-    origin.rstrip('/') for origin in config(
-        'CSRF_TRUSTED_ORIGINS',
-        default='http://localhost:3000,http://localhost:5173,http://localhost:8080,https://agencemenage.ma,https://www.agencemenage.ma,https://app.agencemenage.ma,https://profil.agencemenage.ma,https://feedback.agencemenage.ma'
-    ).split(',') if origin
+    o.rstrip('/') for o in config('CSRF_TRUSTED_ORIGINS', default=_DEFAULT_ORIGINS, cast=Csv()) if o
 ]
 
 # ─── DRF Spectacular (OpenAPI) ────────────────────────────────────────────
@@ -200,6 +242,8 @@ SPECTACULAR_SETTINGS = {
     'DESCRIPTION': 'API pour la gestion du back-office de agencemenage.ma',
     'VERSION': '1.0.0',
     'SERVE_INCLUDE_SCHEMA': False,
+    'SERVE_PERMISSIONS': ['accounts.permissions.IsAdminOrDebugOnly'],
+    'SERVE_PUBLIC': DEBUG,
 }
 # ─── 360 Dialog WhatsApp Integration ───────────────────────────────────────
 D360_API_KEY = config('D360_API_KEY', default='')

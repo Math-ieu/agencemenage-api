@@ -1,5 +1,7 @@
 import datetime
+from django.core.files.uploadedfile import UploadedFile
 from rest_framework import serializers
+from agencemenage.validators import validate_uploaded_document
 from .models import Demande, NRPLog, Document, AuditLog, ProfilShare, SubscriptionPlanning, AppNotification, FeteReligieuse, ContactLead
 from django.conf import settings
 from .utils.whatsapp import WhatsAppService
@@ -37,6 +39,11 @@ class DocumentSerializer(serializers.ModelSerializer):
         fields = ['id', 'demande', 'type_document', 'fichier', 'nom', 'created_at', 'created_by', 'download_url', 'public_media_url']
         read_only_fields = ['created_at', 'created_by', 'download_url', 'public_media_url']
 
+    def validate_fichier(self, value):
+        if isinstance(value, UploadedFile):
+            return validate_uploaded_document(value)
+        return value
+
     def get_download_url(self, obj):
         """Retourne l'URL de téléchargement sécurisé sans exposer le chemin physique."""
         if not obj.fichier:
@@ -73,6 +80,13 @@ class AppNotificationSerializer(serializers.ModelSerializer):
     class Meta:
         model = AppNotification
         fields = '__all__'
+
+
+class AppNotificationUpdateSerializer(serializers.ModelSerializer):
+    """Serializer restreint pour marquer une notification lue sans altérer cible/message."""
+    class Meta:
+        model = AppNotification
+        fields = ['is_read']
 
 
 class DemandeSerializer(serializers.ModelSerializer):
@@ -1390,6 +1404,8 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
         prix_val = data.get('prix')
         if prix_val is not None:
             if isinstance(prix_val, (int, float)):
+                if prix_val < 0:
+                    raise serializers.ValidationError({'prix': "Le prix ne peut pas être négatif."})
                 data['prix'] = prix_val
             elif isinstance(prix_val, str):
                 prix_str = prix_val.strip()
@@ -1399,10 +1415,21 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
                 else:
                     cleaned_num = prix_str.upper().replace('MAD', '').replace('DH', '').replace(' ', '').replace(',', '.').strip()
                     try:
-                        data['prix'] = float(cleaned_num)
+                        parsed_prix = float(cleaned_num)
+                        if parsed_prix < 0:
+                            raise serializers.ValidationError({'prix': "Le prix ne peut pas être négatif."})
+                        data['prix'] = parsed_prix
                     except (ValueError, TypeError):
                         data['prix'] = None
                         data['is_devis'] = True
+
+        # Strip privileged internal keys from public formulaire_data
+        raw_fd = data.get('formulaire_data')
+        if isinstance(raw_fd, dict):
+            cleaned_fd = dict(raw_fd)
+            for forbidden_key in ('facturation', 'montant_facture', 'montant_devis', 'workflow_history', 'date_overrides'):
+                cleaned_fd.pop(forbidden_key, None)
+            data['formulaire_data'] = cleaned_fd
 
         # 4. Clean date_intervention
         date_val = data.get('date_intervention')
@@ -1481,30 +1508,19 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
                 provided_name = client_name.lower()
                 
                 if not provided_name or provided_name in existing_name or existing_name in provided_name:
-                    # Confirmed match
+                    # Confirmed match — fill ONLY missing/empty fields; never overwrite existing client PII
                     client = existing_client
                     id_statut = Demande.ID_EXISTANT
                     
-                    # Update existing client info
-                    if client_data['last_name']:
-                        client.last_name = client_data['last_name']
-                    if client_data['first_name']:
-                        client.first_name = client_data['first_name']
-                    if client_data['whatsapp']:
-                        client.whatsapp = client_data['whatsapp']
-                    if client_data['email']:
-                        client.email = client_data['email']
-                    if client_data['city']:
-                        client.city = client_data['city']
-                    if client_data['neighborhood']:
-                        client.neighborhood = client_data['neighborhood']
-                    if client_data['address']:
-                        client.address = client_data['address']
-                    if client_data['entity_name']:
-                        client.entity_name = client_data['entity_name']
-                    if client_data.get('contact_person'):
-                        client.contact_person = client_data['contact_person']
-                    client.save()
+                    updated_fields = []
+                    for field_key in ('last_name', 'first_name', 'whatsapp', 'email', 'city', 'neighborhood', 'address', 'entity_name', 'contact_person'):
+                        incoming_val = (client_data.get(field_key) or '').strip()
+                        current_val = (getattr(client, field_key, '') or '').strip()
+                        if incoming_val and not current_val:
+                            setattr(client, field_key, incoming_val)
+                            updated_fields.append(field_key)
+                    if updated_fields:
+                        client.save(update_fields=updated_fields)
                     
                     # Auto-assign to existing commercial
                     if existing_client.assigned_commercial:
@@ -1526,13 +1542,17 @@ class PublicDemandeCreateSerializer(serializers.ModelSerializer):
                 segment = get_segment_from_service(service)
                 validated_data['segment'] = segment
 
-            # Sync client segment & Ownership
+            # Sync client segment & Ownership (only for new/duplicate clients or unassigned commercial)
             if client:
-                if 'segment' in validated_data:
+                client_updates = []
+                if 'segment' in validated_data and id_statut != Demande.ID_EXISTANT:
                     client.segment = validated_data['segment']
+                    client_updates.append('segment')
                 if not client.assigned_commercial and validated_data.get('assigned_to'):
                     client.assigned_commercial = validated_data['assigned_to']
-                client.save()
+                    client_updates.append('assigned_commercial')
+                if client_updates:
+                    client.save(update_fields=client_updates)
 
             # Enforce full server-side V3.2 validation on promo_code if provided
             resolved_promo = None

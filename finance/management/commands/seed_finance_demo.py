@@ -1,8 +1,11 @@
+import os
 from datetime import timedelta
 from decimal import Decimal
 
-from django.core.management.base import BaseCommand
+from django.conf import settings
+from django.core.management.base import BaseCommand, CommandError
 from django.utils import timezone
+from django.utils.crypto import get_random_string
 
 from accounts.models import User
 from agents.models import Agent
@@ -16,6 +19,9 @@ class Command(BaseCommand):
     help = "Injecte des donnees fictives finance (missions, factures, paiements, caisse)."
 
     def handle(self, *args, **options):
+        if not settings.DEBUG:
+            raise CommandError("Commande de démonstration interdite lorsque DEBUG=False.")
+
         today = timezone.localdate()
 
         user, _ = User.objects.get_or_create(
@@ -29,7 +35,8 @@ class Command(BaseCommand):
             },
         )
         if not user.has_usable_password():
-            user.set_password('Demo1234!')
+            demo_pwd = os.environ.get('DEMO_SEED_PASSWORD') or get_random_string(16)
+            user.set_password(demo_pwd)
             user.save(update_fields=['password'])
 
         clients_data = [

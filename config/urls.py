@@ -10,8 +10,9 @@ from rest_framework_simplejwt.views import TokenRefreshView
 from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, SpectacularSwaggerView
 
 # Import views
+from accounts.permissions import IsAdminOrDebugOnly
 from accounts.views import (
-    CustomTokenObtainPairView, CookieTokenRefreshView, LogoutView, UserViewSet,
+    CustomTokenObtainPairView, CookieTokenRefreshView, LogoutView, CsrfTokenView, UserViewSet,
     MeView, ChangePasswordView, RolePermissionView, ForgotPasswordView, ResetPasswordView
 )
 from clients.views import ClientViewSet
@@ -71,6 +72,7 @@ urlpatterns = [
     path('api/site/', include('site_settings.urls')),
 
     # Auth endpoints
+    path('api/auth/csrf/', CsrfTokenView.as_view(), name='csrf_token'),
     path('api/auth/login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/refresh/', CookieTokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),
@@ -86,7 +88,7 @@ urlpatterns = [
 
 
     # OpenAPI docs
-    path('api/schema/', SpectacularAPIView.as_view(), name='schema'),
-    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema'), name='swagger-ui'),
-    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema'), name='redoc'),
+    path('api/schema/', SpectacularAPIView.as_view(permission_classes=[IsAdminOrDebugOnly]), name='schema'),
+    path('api/docs/', SpectacularSwaggerView.as_view(url_name='schema', permission_classes=[IsAdminOrDebugOnly]), name='swagger-ui'),
+    path('api/redoc/', SpectacularRedocView.as_view(url_name='schema', permission_classes=[IsAdminOrDebugOnly]), name='redoc'),
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)

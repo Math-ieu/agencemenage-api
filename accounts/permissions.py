@@ -1,3 +1,4 @@
+from django.conf import settings
 from django.utils import timezone
 from rest_framework import permissions
 
@@ -153,9 +154,14 @@ class RoleBasedPermission(permissions.BasePermission):
             
             if action in ['update', 'partial_update']:
                 is_blacklisting = 'is_blacklisted' in request.data
-                if is_blacklisting:
-                    return has_perm('blacklister_clients')
-                return has_perm('modifier_clients')
+                other_fields = [k for k in request.data.keys() if k != 'is_blacklisted']
+                if is_blacklisting and not has_perm('blacklister_clients'):
+                    return False
+                if other_fields and not has_perm('modifier_clients'):
+                    return False
+                if not is_blacklisting and not other_fields:
+                    return has_perm('modifier_clients') or has_perm('blacklister_clients')
+                return True
                 
             if action == 'create':
                 return has_perm('modifier_clients')
@@ -163,8 +169,10 @@ class RoleBasedPermission(permissions.BasePermission):
             if action == 'affecter':
                 return has_perm('affectation_client') or has_perm('affecter_commercial')
                 
-            if action in ['list', 'retrieve']:
-                return has_perm('consulter_clients')
+            if action in ['list', 'retrieve', 'action_logs', 'assignments']:
+                return has_perm('consulter_clients') or has_perm('consulter_compte_client')
+
+            return False
 
         # 4. Gestion des profils candidats (AgentViewSet)
         if view_name == 'AgentViewSet':
@@ -187,13 +195,20 @@ class RoleBasedPermission(permissions.BasePermission):
                 other_fields = [k for k in request.data.keys() if k not in ['assigned_to', 'is_blacklisted']]
                 if other_fields and not has_modify:
                     return False
+                if not is_blacklisting and not is_assigning and not other_fields:
+                    return has_modify
                 return True
                 
             if action == 'create':
                 return has_perm('creer_agents')
+
+            if action == 'affecter':
+                return has_perm('assigner_charge_profil') or has_perm('modifier_agents')
                 
-            if action in ['list', 'retrieve']:
+            if action in ['list', 'retrieve', 'history', 'assignments']:
                 return has_perm('consulter_agents')
+
+            return False
 
         # 5. Gestion des demandes (DemandeViewSet)
         if view_name == 'DemandeViewSet':
@@ -253,6 +268,97 @@ class RoleBasedPermission(permissions.BasePermission):
                     has_perm('consulter_dashboard')
                 )
 
+            if action in ['historique', 'notifications_urgentes']:
+                return (
+                    has_perm('consulter_historique_global') or
+                    has_perm('consulter_dashboard') or
+                    has_perm('consulter_demandes') or
+                    has_perm('traiter_demandes_affectees') or
+                    has_perm('creer_valider_demande')
+                )
+
+            if action == 'export_csv':
+                return has_perm('exporter_historique_csv') or has_perm('consulter_historique_global')
+
+            if action == 'sync_workflow':
+                return (
+                    has_perm('consulter_dashboard') or
+                    has_perm('consulter_demandes') or
+                    has_perm('traiter_demandes_affectees') or
+                    has_perm('modifier_demande') or
+                    has_perm('editer_besoin')
+                )
+
+            if action in ['confirmer_fin', 'heures_supplementaires']:
+                return (
+                    has_perm('editer_besoin') or
+                    has_perm('editer_besoin_agence') or
+                    has_perm('modifier_demande') or
+                    has_perm('traiter_demandes_affectees') or
+                    has_perm('confirmation_avant_operation') or
+                    has_perm('creer_valider_demande')
+                )
+
+            if action in ['confirmer_client', 'nouveau_client']:
+                return (
+                    has_perm('traiter_demandes_affectees') or
+                    has_perm('creer_valider_demande') or
+                    has_perm('modifier_demande') or
+                    has_perm('modifier_clients')
+                )
+
+            if action == 'download_document':
+                return (
+                    has_perm('consulter_demandes') or
+                    has_perm('consulter_dashboard') or
+                    has_perm('consulter_factures') or
+                    has_perm('creer_devis') or
+                    has_perm('generer_facture') or
+                    has_perm('traiter_demandes_affectees')
+                )
+
+            if action in ['planning', 'create_planning_intervention']:
+                if request.method in permissions.SAFE_METHODS:
+                    return (
+                        has_perm('consulter_abonnements') or
+                        has_perm('consulter_planning_abonnements') or
+                        has_perm('consulter_demandes') or
+                        has_perm('consulter_dashboard')
+                    )
+                return (
+                    has_perm('creer_abonnement') or
+                    has_perm('modifier_abonnement') or
+                    has_perm('editer_besoin') or
+                    has_perm('modifier_demande') or
+                    has_perm('traiter_demandes_affectees') or
+                    has_perm('creer_valider_demande')
+                )
+
+            if action in ['abonnements_vue_ensemble', 'abonnements_planning_stats', 'abonnements_facturation']:
+                return (
+                    has_perm('consulter_abonnements') or
+                    has_perm('consulter_planning_abonnements') or
+                    has_perm('consulter_facturation_abonnements') or
+                    has_perm('consulter_dashboard') or
+                    has_perm('consulter_demandes')
+                )
+
+            if action == 'abonnements_toggle_suspend':
+                return (
+                    has_perm('pause_standby_abonnement') or
+                    has_perm('resilier_abonnement') or
+                    has_perm('modifier_abonnement')
+                )
+
+            if action == 'abonnements_confirm_paiement':
+                return (
+                    has_perm('valider_facturation_abonnement') or
+                    has_perm('valider_paiement_debit') or
+                    has_perm('valider_paiement_credit') or
+                    has_perm('mouvements_caisse') or
+                    has_perm('modifier_facture')
+                )
+
             if action == 'generate_document':
                 doc_type = request.data.get('type')
                 if doc_type == 'facture':
@@ -270,6 +376,8 @@ class RoleBasedPermission(permissions.BasePermission):
                 elif doc_type == 'devis':
                     return has_perm('creer_devis')
                 return has_perm('consulter_demandes')
+
+            return False
 
         # 6. Gestion financière (FactureViewSet, PaiementViewSet, EntreeCaisseViewSet)
         if view_name in ['FactureViewSet', 'PaiementViewSet', 'EntreeCaisseViewSet']:
@@ -300,6 +408,18 @@ class RoleBasedPermission(permissions.BasePermission):
                     from finance.models import Facture
                     if Facture.objects.filter(pk=facture_id, source='airbnb').exists():
                         return role == 'responsable_facturation'
+            if action == 'destroy':
+                if view_name == 'EntreeCaisseViewSet':
+                    return has_perm('mouvements_caisse') or has_perm('cloturer_caisse_journaliere')
+                return False
+            if view_name == 'EntreeCaisseViewSet' and action in ['solde', 'export_csv']:
+                return (
+                    has_perm('consulter_solde_caisse') or
+                    has_perm('voir_la_caisse') or
+                    has_perm('mouvements_caisse') or
+                    has_perm('consulter_tresorerie') or
+                    has_perm('sorties_caisse')
+                )
             if action in ['refund', 'cancel', 'annuler', 'remise']:
                 return has_perm('mouvements_caisse') or (role == 'responsable_facturation' and view_name in ['FactureViewSet', 'PaiementViewSet'])
             if action in ['create', 'update', 'partial_update']:
@@ -324,6 +444,7 @@ class RoleBasedPermission(permissions.BasePermission):
                     has_perm('consulter_tresorerie') or
                     has_perm('consulter_dus_agences_profils')
                 )
+            return False
 
         # 7. Retours clients / Feedback (FeedbackViewSet)
         if view_name == 'FeedbackViewSet':
@@ -331,32 +452,31 @@ class RoleBasedPermission(permissions.BasePermission):
                 return has_perm('generer_rapports_qualite')
             if action in ['list', 'retrieve']:
                 return has_perm('consulter_retours_qualite')
-            return has_perm('repondre_avis_clients') or has_perm('moderer_masquer_avis')
+            if action in ['update', 'partial_update', 'destroy']:
+                return has_perm('repondre_avis_clients') or has_perm('moderer_masquer_avis')
+            return False
 
         # 8. Marketing (PromoCodeViewSet, CommercialGestureViewSet, CampaignViewSet)
         if view_name == 'PromoCodeViewSet':
-            if action == 'create':
-                return has_perm('creer_code_promo')
-            elif action in ['update', 'partial_update', 'destroy']:
+            if action in ['create', 'update', 'partial_update', 'destroy']:
                 return has_perm('creer_code_promo')
             elif action in ['list', 'retrieve']:
                 return has_perm('consulter_marketing')
+            return False
                 
         if view_name == 'CommercialGestureViewSet':
-            if action == 'create':
-                return has_perm('creer_geste_commercial')
-            elif action in ['update', 'partial_update', 'destroy']:
+            if action in ['create', 'update', 'partial_update', 'destroy']:
                 return has_perm('creer_geste_commercial')
             elif action in ['list', 'retrieve']:
                 return has_perm('consulter_marketing')
+            return False
                 
         if view_name == 'CampaignViewSet':
-            if action == 'create':
-                return has_perm('creer_campagne')
-            elif action in ['update', 'partial_update', 'destroy']:
+            if action in ['create', 'update', 'partial_update', 'destroy', 'send']:
                 return has_perm('creer_campagne')
             elif action in ['list', 'retrieve']:
                 return has_perm('consulter_marketing')
+            return False
 
         # 9. Module Airbnb / Conciergerie
         if view_name in AIRBNB_VIEWSETS:
@@ -392,7 +512,77 @@ class RoleBasedPermission(permissions.BasePermission):
                 )
             return False
 
-        return True
+        # 12. Missions (MissionViewSet)
+        if view_name == 'MissionViewSet':
+            if action in ['list', 'retrieve']:
+                return (
+                    has_perm('consulter_dashboard')
+                    or has_perm('consulter_demandes')
+                    or has_perm('consulter_factures')
+                    or has_perm('consulter_comptes_profil')
+                    or has_perm('consulter_dus_agences_profils')
+                    or has_perm('consulter_debit')
+                    or has_perm('consulter_credit')
+                )
+            if action in ['create', 'update', 'partial_update']:
+                return (
+                    has_perm('editer_besoin')
+                    or has_perm('editer_besoin_agence')
+                    or has_perm('modifier_demande')
+                    or has_perm('traiter_demandes_affectees')
+                    or has_perm('valider_paiement_debit')
+                    or has_perm('valider_paiement_credit')
+                    or has_perm('validation_paiements_dus')
+                    or has_perm('modifier_facture')
+                    or has_perm('editer_besoin_facture')
+                )
+            if action == 'destroy':
+                return has_perm('supprimer_demande_dashboard')
+            return False
+
+        # 13. Documents (DocumentViewSet)
+        if view_name == 'DocumentViewSet':
+            if action in ['list', 'retrieve']:
+                return (
+                    has_perm('consulter_demandes')
+                    or has_perm('consulter_dashboard')
+                    or has_perm('consulter_factures')
+                    or has_perm('creer_devis')
+                    or has_perm('generer_facture')
+                )
+            if action == 'create':
+                return (
+                    has_perm('creer_devis')
+                    or has_perm('generer_facture')
+                    or has_perm('modifier_demande')
+                    or has_perm('editer_besoin')
+                    or has_perm('traiter_demandes_affectees')
+                    or has_perm('creer_valider_demande')
+                )
+            if action in ['update', 'partial_update', 'destroy']:
+                return (
+                    has_perm('supprimer_demande_dashboard')
+                    or has_perm('modifier_demande')
+                    or has_perm('modifier_facture')
+                )
+            return False
+
+        # 14. Journal d'audit (AuditLogViewSet)
+        if view_name == 'AuditLogViewSet':
+            if action in ['list', 'retrieve']:
+                return (
+                    has_perm('consulter_historique_global')
+                    or has_perm('parametres_globaux')
+                    or has_perm('consulter_dashboard')
+                    or has_perm('consulter_demandes')
+                )
+            return False
+
+        # 15. Notifications internes (AppNotificationViewSet)
+        if view_name == 'AppNotificationViewSet':
+            return action in ['list', 'retrieve', 'update', 'partial_update']
+
+        return False
 
     def _has_airbnb_permission(self, request, view_name, action, role):
         """Contrôle strict des accès Airbnb selon la matrice Brief §2.1 & §2.2."""
@@ -594,6 +784,23 @@ class RoleBasedPermission(permissions.BasePermission):
             
             # If the request method is read-only (GET, HEAD, OPTIONS), allow if they have view permissions
             if request.method in ['GET', 'HEAD', 'OPTIONS']:
+                if action == 'download_document':
+                    return (
+                        has_consulter_demandes or
+                        has_consulter_dashboard or
+                        has_traiter or
+                        has_creer_valider or
+                        'consulter_factures' in permissions_list or
+                        'creer_devis' in permissions_list or
+                        'generer_facture' in permissions_list
+                    )
+                if action == 'planning':
+                    return (
+                        has_consulter_demandes or
+                        has_consulter_dashboard or
+                        'consulter_abonnements' in permissions_list or
+                        'consulter_planning_abonnements' in permissions_list
+                    )
                 if (has_consulter_demandes or 
                     has_consulter_dashboard or 
                     has_traiter or 
@@ -603,8 +810,18 @@ class RoleBasedPermission(permissions.BasePermission):
             is_concerned = (
                 obj.created_by == user or
                 obj.assigned_to == user or
-                obj.assigned_to_operations == user
+                obj.assigned_to_operations == user or
+                (obj.client_id is not None and getattr(obj.client, 'assigned_commercial_id', None) == user.id)
             )
+            is_unassigned_incoming = (
+                obj.created_by is None and
+                obj.assigned_to is None and
+                obj.assigned_to_operations is None
+            )
+
+            if request.method not in permissions.SAFE_METHODS and action not in ('affecter', 'affecter_operations'):
+                if not is_exempt and not is_concerned and not is_unassigned_incoming:
+                    return False
 
             if action == 'envoyer_profil':
                 return 'postuler_demande' in permissions_list
@@ -646,6 +863,51 @@ class RoleBasedPermission(permissions.BasePermission):
 
             elif action == 'affecter_operations':
                 return 'assigner_charge_operation' in permissions_list
+
+            elif action == 'annuler_facturation':
+                return 'facturation_annulee' in permissions_list
+
+            elif action in ['appliquer_geste', 'geste_commercial']:
+                return 'creer_geste_commercial' in permissions_list or 'geste_commercial' in permissions_list
+
+            elif action in ['confirmer_fin', 'heures_supplementaires']:
+                return (
+                    'editer_besoin' in permissions_list or
+                    'editer_besoin_agence' in permissions_list or
+                    'modifier_demande' in permissions_list or
+                    has_traiter or
+                    'confirmation_avant_operation' in permissions_list or
+                    has_creer_valider
+                )
+
+            elif action in ['confirmer_client', 'nouveau_client']:
+                return has_traiter or has_creer_valider or 'modifier_demande' in permissions_list or 'modifier_clients' in permissions_list
+
+            elif action in ['planning', 'create_planning_intervention']:
+                return (
+                    'creer_abonnement' in permissions_list or
+                    'modifier_abonnement' in permissions_list or
+                    'editer_besoin' in permissions_list or
+                    'modifier_demande' in permissions_list or
+                    has_traiter or
+                    has_creer_valider
+                )
+
+            elif action == 'abonnements_toggle_suspend':
+                return (
+                    'pause_standby_abonnement' in permissions_list or
+                    'resilier_abonnement' in permissions_list or
+                    'modifier_abonnement' in permissions_list
+                )
+
+            elif action == 'abonnements_confirm_paiement':
+                return (
+                    'valider_facturation_abonnement' in permissions_list or
+                    'valider_paiement_debit' in permissions_list or
+                    'valider_paiement_credit' in permissions_list or
+                    'mouvements_caisse' in permissions_list or
+                    'modifier_facture' in permissions_list
+                )
 
             elif action == 'nrp':
                 return 'consulter_demandes' in permissions_list or 'modifier_demande' in permissions_list or has_traiter or has_creer_valider
@@ -820,16 +1082,29 @@ class RoleBasedPermission(permissions.BasePermission):
         if view_name in AIRBNB_VIEWSETS:
             return self._has_airbnb_object_permission(request, view_name, action, role, user, obj)
 
-        if view_name == 'AppNotificationViewSet' and role in AIRBNB_ONLY_ROLES:
-            if getattr(obj, 'target_user_id', None) == user.id:
-                return True
+        if view_name == 'AppNotificationViewSet':
+            if getattr(obj, 'target_user_id', None) is not None:
+                return obj.target_user_id == user.id
             target_roles = [str(r).lower() for r in (getattr(obj, 'target_roles', None) or [])]
-            return str(role).lower() in target_roles
+            if target_roles:
+                user_role = str(role or '').lower()
+                matching_roles = {user_role}
+                if user_role in {'charge_operations', 'responsable_operations', 'operationnel'}:
+                    matching_roles.add('operations')
+                return any(r in matching_roles for r in target_roles)
+            return role not in AIRBNB_ONLY_ROLES
 
         if role in AIRBNB_ONLY_ROLES and view_name not in ['ClientViewSet', 'FactureViewSet', 'PaiementViewSet']:
             return False
 
-        return True
+        if view_name in [
+            'UserViewSet', 'AgentViewSet', 'MissionViewSet', 'DocumentViewSet',
+            'AuditLogViewSet', 'PromoCodeViewSet', 'CommercialGestureViewSet',
+            'CampaignViewSet', 'SiteConfigViewSet', 'ContactLeadViewSet',
+        ]:
+            return True
+
+        return False
 
     def _has_airbnb_object_permission(self, request, view_name, action, role, user, obj):
         is_safe = request.method in permissions.SAFE_METHODS
@@ -934,3 +1209,16 @@ class RoleBasedPermission(permissions.BasePermission):
             return False
 
         return False
+
+
+class IsAdminOrDebugOnly(permissions.BasePermission):
+    """Autorise la documentation OpenAPI en DEBUG local ou aux administrateurs authentifiés."""
+    def has_permission(self, request, view):
+        if getattr(settings, 'DEBUG', False):
+            return True
+        user = getattr(request, 'user', None)
+        return bool(
+            user
+            and user.is_authenticated
+            and (user.is_staff or getattr(user, 'role', None) == 'admin')
+        )

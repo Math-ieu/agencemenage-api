@@ -1,4 +1,6 @@
+from django.core.files.uploadedfile import UploadedFile
 from rest_framework import serializers
+from agencemenage.validators import validate_uploaded_document
 from .models import Facture, Paiement, EntreeCaisse
 
 
@@ -7,6 +9,11 @@ class PaiementSerializer(serializers.ModelSerializer):
         model = Paiement
         fields = '__all__'
         read_only_fields = ['created_at', 'created_by']
+
+    def validate_montant(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("Le montant du paiement doit être strictement positif.")
+        return value
 
 
 class FactureSerializer(serializers.ModelSerializer):
@@ -19,6 +26,21 @@ class FactureSerializer(serializers.ModelSerializer):
         model = Facture
         fields = '__all__'
         read_only_fields = ['created_at', 'created_by']
+
+    def validate_montant_total(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Le montant total ne peut pas être négatif.")
+        return value
+
+    def validate_montant_paye(self, value):
+        if value is not None and value < 0:
+            raise serializers.ValidationError("Le montant payé ne peut pas être négatif.")
+        return value
+
+    def validate_pdf_file(self, value):
+        if isinstance(value, UploadedFile):
+            return validate_uploaded_document(value)
+        return value
 
     def get_annulee_par_name(self, obj):
         return obj.annulee_par.full_name if obj.annulee_par else None
@@ -33,3 +55,13 @@ class EntreeCaisseSerializer(serializers.ModelSerializer):
         model = EntreeCaisse
         fields = '__all__'
         read_only_fields = ['created_at', 'created_by']
+
+    def validate_montant(self, value):
+        if value is not None and value <= 0:
+            raise serializers.ValidationError("Le montant du mouvement doit être strictement positif.")
+        return value
+
+    def validate_document_file(self, value):
+        if isinstance(value, UploadedFile):
+            return validate_uploaded_document(value)
+        return value

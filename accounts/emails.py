@@ -1,4 +1,5 @@
 import os
+import html
 import json
 import urllib.request
 import urllib.error
@@ -7,6 +8,11 @@ from django.conf import settings
 from django.utils import timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _sanitize_subject(subject: str) -> str:
+    return ' '.join(str(subject or '').replace('\r', ' ').replace('\n', ' ').split())
+
 
 def send_resend_email(to_email, subject, html_content):
     """
@@ -21,7 +27,7 @@ def send_resend_email(to_email, subject, html_content):
     payload = {
         'from': 'notification@agencemenage.ma',
         'to': to_email,
-        'subject': subject,
+        'subject': _sanitize_subject(subject),
         'html': html_content
     }
 
@@ -38,7 +44,7 @@ def send_resend_email(to_email, subject, html_content):
     )
 
     try:
-        with urllib.request.urlopen(req) as response:
+        with urllib.request.urlopen(req, timeout=15) as response:
             res_body = response.read().decode('utf-8')
             logger.info(f"Resend success: {res_body}")
             return True
@@ -59,7 +65,7 @@ def get_base_html_template(title, content):
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>{title}</title>
+  <title>{html.escape(str(title or ''))}</title>
   <style>
     body {{
       font-family: 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
@@ -204,36 +210,41 @@ def send_account_creation_email(user):
     and the application access link.
     """
     frontend_url = getattr(settings, 'FRONTEND_URL', 'https://app.agencemenage.ma')
-    
+    safe_url = html.escape(str(frontend_url), quote=True)
+    safe_first = html.escape(str(user.first_name or ''))
+    safe_last = html.escape(str(user.last_name or ''))
+    safe_username = html.escape(str(user.username or ''))
+    safe_email = html.escape(str(user.email or ''))
+
     subject = "Création de votre compte - Agence Ménage"
-    
+
     content = f"""
       <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">Bienvenue chez Agence Ménage !</h2>
-      <p>Bonjour {user.first_name} {user.last_name},</p>
+      <p>Bonjour {safe_first} {safe_last},</p>
       <p>Votre compte a été créé avec succès par un administrateur. Voici vos informations de connexion pour accéder à la plateforme :</p>
       
       <div class="card">
         <h3 class="card-title">Vos identifiants de connexion</h3>
         <div class="info-row">
           <span class="info-label">Nom d'utilisateur :</span>
-          <span class="info-value">{user.username}</span>
+          <span class="info-value">{safe_username}</span>
         </div>
         <div class="info-row">
           <span class="info-label">Adresse e-mail :</span>
-          <span class="info-value">{user.email}</span>
+          <span class="info-value">{safe_email}</span>
         </div>
       </div>
       
       <p>Vous pouvez vous connecter en utilisant indifféremment votre nom d'utilisateur ou votre adresse e-mail, associés au mot de passe qui vous a été communiqué.</p>
       
       <div style="text-align: center;">
-        <a href="{frontend_url}" class="btn">Accéder à l'application</a>
+        <a href="{safe_url}" class="btn">Accéder à l'application</a>
       </div>
       
       <p style="font-size: 13px; color: #64748b; margin-top: 20px;">Si le bouton ci-dessus ne fonctionne pas, copiez et collez le lien suivant dans votre navigateur : <br>
-      <a href="{frontend_url}" style="color: #d97706;">{frontend_url}</a></p>
+      <a href="{safe_url}" style="color: #d97706;">{safe_url}</a></p>
     """
-    
+
     html_content = get_base_html_template(subject, content)
     return send_resend_email(user.email, subject, html_content)
 
@@ -243,16 +254,18 @@ def send_password_reset_email(user, reset_code):
     Sends a password reset email containing a 6-digit OTP code.
     """
     subject = "Réinitialisation de votre mot de passe - Agence Ménage"
-    
+    safe_name = html.escape(str(user.first_name or user.username or ''))
+    safe_code = html.escape(str(reset_code or ''))
+
     content = f"""
       <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">Demande de réinitialisation de mot de passe</h2>
-      <p>Bonjour {user.first_name or user.username},</p>
+      <p>Bonjour {safe_name},</p>
       <p>Nous avons reçu une demande de réinitialisation de mot de passe pour votre compte.</p>
       
       <div class="card">
         <h3 class="card-title">Votre code de réinitialisation</h3>
         <p style="margin: 0; font-size: 14px; color: #475569;">Saisissez le code de validation à 6 chiffres suivant dans l'application pour modifier votre mot de passe :</p>
-        <div class="otp-code">{reset_code}</div>
+        <div class="otp-code">{safe_code}</div>
       </div>
       
       <div class="divider"></div>
@@ -260,7 +273,7 @@ def send_password_reset_email(user, reset_code):
       <p style="font-size: 13px; color: #ef4444; font-weight: 500;">Attention : Ce code de récupération expirera dans 15 minutes.</p>
       <p style="font-size: 13px; color: #64748b;">Si vous n'êtes pas à l'origine de cette demande, vous pouvez ignorer cet e-mail en toute sécurité.</p>
     """
-    
+
     html_content = get_base_html_template(subject, content)
     return send_resend_email(user.email, subject, html_content)
 
@@ -274,27 +287,33 @@ def send_holiday_suspension_email(commercial, client_name, fete_label, debut, fi
     if not email:
         return False
 
-    name = f"{getattr(commercial, 'first_name', '')} {getattr(commercial, 'last_name', '')}".strip() or getattr(commercial, 'username', 'Commercial')
-    subject = f"🔔 Alerte Jour Férié ({fete_label}) — Client : {client_name}"
+    raw_name = f"{getattr(commercial, 'first_name', '')} {getattr(commercial, 'last_name', '')}".strip() or getattr(commercial, 'username', 'Commercial')
+    safe_name = html.escape(str(raw_name))
+    safe_client = html.escape(str(client_name or ''))
+    safe_fete = html.escape(str(fete_label or ''))
+    safe_debut = html.escape(str(debut or ''))
+    safe_fin = html.escape(str(fin or ''))
+    safe_passage = html.escape(str(passage or ''))
+    subject = _sanitize_subject(f"🔔 Alerte Jour Férié ({fete_label}) — Client : {client_name}")
 
     content = f"""
       <h2 style="margin-top: 0; color: #0f172a; font-size: 20px;">Alerte Suspension Jour Férié</h2>
-      <p>Bonjour <strong>{name}</strong>,</p>
-      <p>Une période de suspension liée à <strong>{fete_label}</strong> est planifiée du <strong>{debut}</strong> au <strong>{fin}</strong>.</p>
+      <p>Bonjour <strong>{safe_name}</strong>,</p>
+      <p>Une période de suspension liée à <strong>{safe_fete}</strong> est planifiée du <strong>{safe_debut}</strong> au <strong>{safe_fin}</strong>.</p>
       
       <div class="card">
         <h3 class="card-title">Intervention concernée dans votre portefeuille</h3>
         <div class="info-row">
           <span class="info-label">Client :</span>
-          <span class="info-value">{client_name}</span>
+          <span class="info-value">{safe_client}</span>
         </div>
         <div class="info-row">
           <span class="info-label">Date du passage :</span>
-          <span class="info-value">{passage}</span>
+          <span class="info-value">{safe_passage}</span>
         </div>
         <div class="info-row">
           <span class="info-label">Période fériée :</span>
-          <span class="info-value">{debut} au {fin}</span>
+          <span class="info-value">{safe_debut} au {safe_fin}</span>
         </div>
       </div>
       

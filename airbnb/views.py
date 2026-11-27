@@ -1,9 +1,12 @@
 import os
 import re
 import uuid
+import logging
 import mimetypes
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from datetime import datetime, date, time, timedelta
+
+logger = logging.getLogger(__name__)
 
 from django.core.exceptions import ValidationError as DjangoValidationError
 from django.core.files.storage import default_storage
@@ -640,6 +643,11 @@ class BienViewSet(viewsets.ModelViewSet):
         ical_url = (request.data.get('ical_url') or '').strip()
         if not ical_url:
             return Response({'error': "URL iCal requise."}, status=status.HTTP_400_BAD_REQUEST)
+        from .services.ical_service import validate_ical_url
+        try:
+            ical_url = validate_ical_url(ical_url)
+        except ValueError as exc:
+            return Response({'error': str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         bien.ical_url = ical_url
         bien.save(update_fields=['ical_url', 'updated_at'])
         sync_res = None
@@ -1425,8 +1433,18 @@ class CommandeAirbnbViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'])
     def valider_remise_en_etat(self, request, pk=None):
         commande = self.get_object()
-        heures = Decimal(str(request.data.get('heures', commande.remise_en_etat_heures or 0)))
-        montant = Decimal(str(request.data.get('montant', commande.remise_en_etat or 0)))
+        if commande.statut in ('facturee', 'annulee'):
+            return Response(
+                {'error': "Impossible de modifier la remise en état d'une commande facturée ou annulée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        try:
+            heures = Decimal(str(request.data.get('heures', commande.remise_en_etat_heures or 0)))
+            montant = Decimal(str(request.data.get('montant', commande.remise_en_etat or 0)))
+        except (InvalidOperation, ValueError, TypeError):
+            return Response({'error': "Montant ou heures invalides."}, status=status.HTTP_400_BAD_REQUEST)
+        if heures < 0 or montant < 0:
+            return Response({'error': "Les heures et le montant ne peuvent pas être négatifs."}, status=status.HTTP_400_BAD_REQUEST)
         photos = request.data.get('photos', commande.remise_en_etat_photos or [])
 
         commande.remise_en_etat_heures = heures
@@ -1453,9 +1471,25 @@ class CommandeAirbnbViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def accord_remise_en_etat(self, request, pk=None):
+        from .services.url_validators import validate_safe_proof_text_or_url
         commande = self.get_object()
+        if commande.statut in ('facturee', 'annulee'):
+            return Response(
+                {'error': "Impossible d'enregistrer un accord sur une commande facturée ou annulée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+        if commande.remise_en_etat_statut not in ('validee_ops', 'envoyee_client'):
+            return Response(
+                {'error': "La remise en état doit être validée par les opérations avant accord client."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         decision = request.data.get('decision', 'accepte')
         preuve = (request.data.get('accord_preuve') or request.data.get('preuve') or '').strip()
+        try:
+            preuve = validate_safe_proof_text_or_url(preuve, 'accord_preuve')
+        except DjangoValidationError as exc:
+            return Response({'error': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
 
         if decision in ('accepte', 'accord', 'oui'):
             if not preuve:
@@ -1466,8 +1500,14 @@ class CommandeAirbnbViewSet(viewsets.ModelViewSet):
             commande.remise_en_etat_statut = 'accord_ecrit'
             commande.remise_en_etat_accord_preuve = preuve
             commande.remise_en_etat_accord_le = timezone.now()
-            if 'montant' in request.data:
-                commande.remise_en_etat = Decimal(str(request.data['montant']))
+            if getattr(request.user, 'role', None) != 'client_conciergerie' and 'montant' in request.data and request.data['montant'] not in (None, ''):
+                try:
+                    montant_val = Decimal(str(request.data['montant']))
+                except (InvalidOperation, ValueError, TypeError):
+                    return Response({'error': "Montant invalide."}, status=status.HTTP_400_BAD_REQUEST)
+                if montant_val < 0:
+                    return Response({'error': "Le montant ne peut pas être négatif."}, status=status.HTTP_400_BAD_REQUEST)
+                commande.remise_en_etat = montant_val
             commande.total_ttc = (
                 Decimal(str(commande.prix_menage or 0))
                 + Decimal(str(commande.supplement_zone or 0))
@@ -1540,8 +1580,15 @@ class CommandeAirbnbViewSet(viewsets.ModelViewSet):
     @action(detail=False, methods=['get'])
     def planning_grid(self, request):
         date_start = request.query_params.get('start', str(timezone.now().date()))
-        days_count = int(request.query_params.get('days', 7))
-        start = datetime.strptime(date_start, '%Y-%m-%d').date()
+        try:
+            start = datetime.strptime(date_start, '%Y-%m-%d').date()
+        except (ValueError, TypeError):
+            return Response({'error': "Format de date invalide (attendu YYYY-MM-DD)."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            days_count = int(request.query_params.get('days', 7))
+        except (ValueError, TypeError):
+            return Response({'error': "Paramètre days invalide."}, status=status.HTTP_400_BAD_REQUEST)
+        days_count = max(1, min(days_count, 90))
         end = start + timedelta(days=days_count)
         commandes = self.get_queryset().filter(date_prestation__gte=start, date_prestation__lt=end)
         serializer = CommandeAirbnbListSerializer(commandes, many=True, context={'request': request})
@@ -2058,9 +2105,19 @@ class SignalementCommandeViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def accord_client(self, request, pk=None):
+        from .services.url_validators import validate_safe_proof_text_or_url
         sig = self.get_object()
+        if sig.commande and sig.commande.statut in ('facturee', 'annulee'):
+            return Response(
+                {'error': "Impossible d'enregistrer un accord sur une commande facturée ou annulée."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
         decision = request.data.get('accord_client', request.data.get('decision', 'accepte'))
         preuve = (request.data.get('accord_preuve') or '').strip()
+        try:
+            preuve = validate_safe_proof_text_or_url(preuve, 'accord_preuve')
+        except DjangoValidationError as exc:
+            return Response({'error': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
         if decision == 'accepte' and not preuve:
             return Response(
                 {'error': "Une preuve d'accord écrit est requise pour valider un supplément."},
@@ -2077,8 +2134,14 @@ class SignalementCommandeViewSet(viewsets.ModelViewSet):
                 cmd.remise_en_etat_statut = 'accord_ecrit'
                 cmd.remise_en_etat_accord_preuve = preuve
                 cmd.remise_en_etat_accord_le = timezone.now()
-                if 'montant' in request.data:
-                    cmd.remise_en_etat = Decimal(str(request.data['montant']))
+                if getattr(request.user, 'role', None) != 'client_conciergerie' and 'montant' in request.data and request.data['montant'] not in (None, ''):
+                    try:
+                        montant_val = Decimal(str(request.data['montant']))
+                    except (InvalidOperation, ValueError, TypeError):
+                        return Response({'error': "Montant invalide."}, status=status.HTTP_400_BAD_REQUEST)
+                    if montant_val < 0:
+                        return Response({'error': "Le montant ne peut pas être négatif."}, status=status.HTTP_400_BAD_REQUEST)
+                    cmd.remise_en_etat = montant_val
             else:
                 cmd.remise_en_etat_statut = 'refusee'
                 cmd.remise_en_etat = Decimal('0.00')
@@ -2165,12 +2228,18 @@ class ObjetTrouveViewSet(viewsets.ModelViewSet):
 
     @action(detail=True, methods=['post'])
     def mettre_en_securite(self, request, pk=None):
+        from .services.url_validators import validate_safe_media_url
         objet = self.get_object()
         objet.statut = 'mis_en_securite'
         objet.mis_en_securite_par = request.user
         objet.mis_en_securite_le = timezone.now()
         if request.data.get('photo_mise_en_securite'):
-            objet.photo_mise_en_securite = request.data['photo_mise_en_securite']
+            try:
+                objet.photo_mise_en_securite = validate_safe_media_url(
+                    request.data['photo_mise_en_securite'], 'photo_mise_en_securite'
+                )
+            except DjangoValidationError as exc:
+                return Response({'error': str(exc.message)}, status=status.HTTP_400_BAD_REQUEST)
         objet.save(update_fields=[
             'statut', 'mis_en_securite_par', 'mis_en_securite_le',
             'photo_mise_en_securite', 'updated_at',
@@ -2306,7 +2375,11 @@ class FacturationAirbnbViewSet(
         except Client.DoesNotExist:
             return Response({'error': "Client introuvable."}, status=status.HTTP_404_NOT_FOUND)
         _assert_client_access(request.user, client)
-        n = int(request.query_params.get('n', 5))
+        try:
+            n = int(request.query_params.get('n', 5))
+        except (ValueError, TypeError):
+            return Response({'error': "Paramètre n invalide."}, status=status.HTTP_400_BAD_REQUEST)
+        n = max(1, min(n, 24))
         return Response({'client_id': client.id, 'calendrier': preview_calendrier_facturation(client, n=n)})
 
     @action(detail=False, methods=['post'])
@@ -2373,13 +2446,16 @@ class FacturationAirbnbViewSet(
         reference = (request.data.get('reference') or '').strip()
         if not reference:
             return Response({'error': "La référence de virement est obligatoire."}, status=status.HTTP_400_BAD_REQUEST)
-        updated = declarer_virement(
-            facture=facture,
-            reference=reference,
-            justificatif_url=request.data.get('justificatif_url', ''),
-            montant_declare=request.data.get('montant_declare'),
-            user=request.user,
-        )
+        try:
+            updated = declarer_virement(
+                facture=facture,
+                reference=reference,
+                justificatif_url=request.data.get('justificatif_url', ''),
+                montant_declare=request.data.get('montant_declare'),
+                user=request.user,
+            )
+        except (DjangoValidationError, InvalidOperation, ValueError) as exc:
+            return Response({'error': _extract_error_message(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response({'success': True, 'facture': self.get_serializer(updated).data})
 
     @action(detail=True, methods=['post'])
@@ -2565,7 +2641,15 @@ class FacturationAirbnbViewSet(
             raise PermissionDenied("Les crons de facturation ou seuil sont réservés au Responsable Facturation / Admin.")
         kwargs = {}
         if request.data.get('date') and job in ('generer_factures_airbnb', 'verifier_suspensions_clients', 'dispatch_whatsapp_20h', 'remontee_tdb_18h', 'relances_execution_airbnb', 'verifier_seuil_conciergerie'):
-            kwargs['date'] = request.data['date']
+            raw_date = str(request.data['date']).strip()
+            try:
+                datetime.strptime(raw_date, '%Y-%m-%d')
+            except ValueError:
+                return Response(
+                    {'error': "Format de date invalide (attendu : YYYY-MM-DD)."},
+                    status=status.HTTP_400_BAD_REQUEST,
+                )
+            kwargs['date'] = raw_date
         call_command(job, **kwargs)
         JournalAuditAirbnb.objects.create(
             entite='CronJob',
@@ -2607,6 +2691,8 @@ class AirbnbPhotoUploadView(APIView):
     MAX_FILE_SIZE = 15 * 1024 * 1024
 
     def post(self, request, *args, **kwargs):
+        from agencemenage.validators import validate_uploaded_document
+
         file_obj = request.FILES.get('photo') or request.FILES.get('file')
         if not file_obj:
             return Response(
@@ -2614,19 +2700,17 @@ class AirbnbPhotoUploadView(APIView):
                 status=status.HTTP_400_BAD_REQUEST,
             )
 
-        if file_obj.size > self.MAX_FILE_SIZE:
-            return Response(
-                {'error': f"Le fichier est trop volumineux ({round(file_obj.size / (1024 * 1024), 2)} Mo). Limite maximale : 15 Mo."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
-
-        _, ext = os.path.splitext(file_obj.name)
-        ext = ext.lower()
-        if ext not in self.ALLOWED_EXTENSIONS:
-            return Response(
-                {'error': f"Extension non supportée ({ext}). Formats autorisés : JPG, JPEG, PNG, WEBP, HEIC, PDF."},
-                status=status.HTTP_400_BAD_REQUEST,
-            )
+        try:
+            validate_uploaded_document(file_obj, max_size_mb=15, allow_heic=True)
+        except DRFValidationError as exc:
+            detail = exc.detail
+            if isinstance(detail, list):
+                msg = str(detail[0])
+            elif isinstance(detail, dict):
+                msg = str(next(iter(detail.values())))
+            else:
+                msg = str(detail)
+            return Response({'error': msg}, status=status.HTTP_400_BAD_REQUEST)
 
         category = request.data.get('category', 'general')
         safe_category = "".join(c for c in category if c.isalnum() or c in ('_', '-')) or 'general'
@@ -2673,8 +2757,9 @@ class AirbnbPhotoUploadView(APIView):
                 'content_type': content_type,
                 'category': safe_category,
             }, status=status.HTTP_201_CREATED)
-        except Exception as err:
+        except Exception:
+            logger.exception("Erreur lors de l'enregistrement du fichier Airbnb dans le stockage.")
             return Response(
-                {'error': f"Erreur lors de l'enregistrement dans le bucket de stockage : {str(err)}"},
+                {'error': "Erreur interne lors de l'enregistrement du fichier."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )

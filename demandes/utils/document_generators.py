@@ -238,7 +238,7 @@ def generate_devis_pdf(data: dict) -> bytes:
         
         c.setStrokeColor(colors.HexColor("#cbd5e1"))
         c.setLineWidth(0.5)
-        c.line(margin, desc_y - 2.5 * mm, RIGHT, desc_y - 2.5 * mm)
+        c.line(margin, desc_y - 2.5 * mm, page_w - margin, desc_y - 2.5 * mm)
         
         style = ParagraphStyle(
             name='ContractualDesc',
@@ -248,7 +248,8 @@ def generate_devis_pdf(data: dict) -> bytes:
             textColor=DARK_TEXT
         )
         
-        formatted_desc = desc_text.replace('\n', '<br/>')
+        from xml.sax.saxutils import escape as xml_escape
+        formatted_desc = xml_escape(str(desc_text)).replace('\n', '<br/>')
         p = Paragraph(formatted_desc, style)
         
         max_w = content_w - 6 * mm

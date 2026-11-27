@@ -120,6 +120,7 @@ class PasswordResetCode(models.Model):
     code = models.CharField(max_length=6)
     created_at = models.DateTimeField(auto_now_add=True)
     is_used = models.BooleanField(default=False)
+    attempts = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         verbose_name = "Code de réinitialisation"
@@ -129,8 +130,12 @@ class PasswordResetCode(models.Model):
     def is_valid(self):
         from django.utils import timezone
         from datetime import timedelta
-        # Code valid for 15 minutes
-        return not self.is_used and timezone.now() < self.created_at + timedelta(minutes=15)
+        # Code valid for 15 minutes and max 5 failed attempts
+        return (
+            not self.is_used
+            and self.attempts < 5
+            and timezone.now() < self.created_at + timedelta(minutes=15)
+        )
 
     def __str__(self):
         return f"Reset code for {self.user.email} (valid: {self.is_valid()})"

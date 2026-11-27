@@ -221,6 +221,20 @@ def _create_facture_for_commandes(
     if not commandes:
         raise ValidationError("Aucune commande facturable à facturer.")
 
+    cmd_ids = [c.pk for c in commandes]
+    locked_commandes = list(
+        CommandeAirbnb.objects.select_for_update()
+        .select_related('bien', 'bien__client')
+        .filter(pk__in=cmd_ids)
+        .order_by('date_prestation', 'id')
+    )
+    if len(locked_commandes) != len(set(cmd_ids)):
+        raise ValidationError("Certaines commandes sélectionnées n'existent plus.")
+    already_invoiced = [c.numero for c in locked_commandes if c.facture_id is not None or c.statut == 'facturee']
+    if already_invoiced:
+        raise ValidationError(f"Commande(s) déjà facturée(s) : {', '.join(already_invoiced)}.")
+    commandes = locked_commandes
+
     cfg = get_airbnb_config()
     emission = emit_date or timezone.localdate()
     echeance = emission + timedelta(days=cfg.delai_paiement_jours or 4)
@@ -545,9 +559,11 @@ def declarer_virement(
     """Permet à la conciergerie de déclarer un virement effectué en attente de rapprochement R.F."""
     if facture.statut == Facture.ANNULE:
         raise ValidationError("Facture annulée.")
+    from .url_validators import validate_safe_media_url
+    safe_url = validate_safe_media_url(justificatif_url, 'virement_justificatif_url')
     facture.virement_declare_le = timezone.now()
     facture.virement_reference = reference or ''
-    facture.virement_justificatif_url = justificatif_url or ''
+    facture.virement_justificatif_url = safe_url
     if montant_declare is not None:
         facture.virement_montant_declare = Decimal(str(montant_declare))
     facture.save(update_fields=[

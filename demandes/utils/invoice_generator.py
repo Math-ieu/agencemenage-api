@@ -3,6 +3,7 @@ from io import BytesIO
 from dataclasses import dataclass
 from typing import List, Optional
 from datetime import date
+from xml.sax.saxutils import escape as xml_escape
 
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors
@@ -182,10 +183,10 @@ class InvoiceGenerator:
         right = [
             date_tbl,
             Spacer(1, 8*mm),
-            self._p("<b>Client:</b>",                        sClientLbl),
-            self._p(f"<b>{d.client_name}</b>",               sClientVal),
-            self._p(f"ICE: {d.client_ice}",                  sClientSub),
-            self._p(f"Adresse: {d.client_address}",          sClientSub),
+            self._p("<b>Client:</b>",                                          sClientLbl),
+            self._p(f"<b>{xml_escape(str(d.client_name or ''))}</b>",          sClientVal),
+            self._p(f"ICE: {xml_escape(str(d.client_ice or ''))}",             sClientSub),
+            self._p(f"Adresse: {xml_escape(str(d.client_address or ''))}",     sClientSub),
         ]
 
         tbl = Table(
@@ -201,9 +202,9 @@ class InvoiceGenerator:
         d = self.data
         col_w = self.PAGE_W - 2 * self.MARGIN
         rows = [
-            [self._p("<b>Facturation n°</b>", self.sBold), self._p(":"), self._p(d.invoice_number)],
-            [self._p("<b>Service</b>",        self.sBold), self._p(":"), self._p(d.service_type)],
-            [self._p("<b>Fréquence</b>",      self.sBold), self._p(":"), self._p(d.frequency)],
+            [self._p("<b>Facturation n°</b>", self.sBold), self._p(":"), self._p(xml_escape(str(d.invoice_number or '')))],
+            [self._p("<b>Service</b>",        self.sBold), self._p(":"), self._p(xml_escape(str(d.service_type or '')))],
+            [self._p("<b>Fréquence</b>",      self.sBold), self._p(":"), self._p(xml_escape(str(d.frequency or '')))],
         ]
         tbl = Table(rows, colWidths=[35*mm, 5*mm, col_w - 40*mm])
         tbl.setStyle(TableStyle([
@@ -226,7 +227,7 @@ class InvoiceGenerator:
 
         for item in d.items:
             rows.append([
-                self._p(item.designation),
+                self._p(xml_escape(str(item.designation or ''))),
                 self._p(f"{self._fmt(item.amount)} MAD", self.sAmtR),
             ])
 
@@ -242,7 +243,7 @@ class InvoiceGenerator:
         if d.reduction_amount > 0:
             reduc_text = "Réduction appliquée :"
             if d.reduction_label:
-                reduc_text = f"Réduction appliquée ({d.reduction_label}) :"
+                reduc_text = f"Réduction appliquée ({xml_escape(str(d.reduction_label))}) :"
             rows.append([
                 self._p(reduc_text, ParagraphStyle("mred", parent=self.sNormal, alignment=TA_RIGHT, textColor=colors.HexColor("#c53030"))),
                 self._p(f"− {self._fmt(d.reduction_amount)} MAD", ParagraphStyle("mredv", parent=self.sNormal, alignment=TA_RIGHT, textColor=colors.HexColor("#c53030"))),
