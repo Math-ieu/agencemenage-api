@@ -1,5 +1,4 @@
 from django.conf import settings
-from django.middleware.csrf import get_token
 from rest_framework import viewsets, status, serializers
 from rest_framework.response import Response
 from rest_framework.views import APIView
@@ -15,23 +14,12 @@ from django.db.models import Q
 import hmac
 import secrets
 
-from .authentication import enforce_csrf
 from .models import User, RolePermission, PasswordResetCode
 from .serializers import (
     UserSerializer, UserCreateSerializer, SelfProfileUpdateSerializer,
     ChangePasswordSerializer, ForgotPasswordSerializer, ResetPasswordSerializer
 )
 from .emails import send_password_reset_email
-
-
-class CsrfTokenView(APIView):
-    """Retourne et dépose un jeton CSRF pour les clients authentifiés par cookies."""
-    permission_classes = [AllowAny]
-    authentication_classes = []
-
-    def get(self, request):
-        token = get_token(request)
-        return Response({'csrfToken': token})
 
 
 def set_jwt_cookies(response, access_token=None, refresh_token=None):
@@ -59,15 +47,6 @@ def set_jwt_cookies(response, access_token=None, refresh_token=None):
         )
 
 
-def _blacklist_all_user_tokens(user):
-    """Révoque tous les refresh tokens actifs d'un utilisateur (si token_blacklist est actif)."""
-    try:
-        from rest_framework_simplejwt.token_blacklist.models import BlacklistedToken, OutstandingToken
-        for token_obj in OutstandingToken.objects.filter(user=user):
-            BlacklistedToken.objects.get_or_create(token=token_obj)
-    except Exception:
-        pass
-
 class CustomTokenObtainPairSerializer(serializers.Serializer):
     email = serializers.CharField(required=False, allow_blank=True)
     username = serializers.CharField(required=False, allow_blank=True)
@@ -75,7 +54,7 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        login_val = (attrs.get('email') or attrs.get('username') or attrs.get('login') or '').strip()
+        login_val = attrs.get('email') or attrs.get('username') or attrs.get('login')
         password = attrs.get('password')
 
         if not login_val:
@@ -101,9 +80,7 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
 
 class CustomTokenObtainPairView(TokenObtainPairView):
     permission_classes = [AllowAny]
-    authentication_classes = []
     serializer_class = CustomTokenObtainPairSerializer
-    throttle_scope = 'auth_login'
 
     def post(self, request, *args, **kwargs):
         response = super().post(request, *args, **kwargs)
@@ -111,7 +88,6 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             access_token = response.data.get('access')
             refresh_token = response.data.get('refresh')
             set_jwt_cookies(response, access_token, refresh_token)
-            response.data['csrf_token'] = get_token(request)
 
             # On retire les tokens du payload JSON pour forcer l'usage des cookies exclusifs côté JS
             if 'access' in response.data:
@@ -123,10 +99,8 @@ class CustomTokenObtainPairView(TokenObtainPairView):
 
 class CookieTokenRefreshView(TokenRefreshView):
     permission_classes = [AllowAny]
-    authentication_classes = []
 
     def post(self, request, *args, **kwargs):
-        enforce_csrf(request)
         refresh_token = request.COOKIES.get('refresh_token')
         if not refresh_token:
             return Response({"detail": "Refresh token manquant dans les cookies."}, status=status.HTTP_401_UNAUTHORIZED)
@@ -134,27 +108,19 @@ class CookieTokenRefreshView(TokenRefreshView):
         serializer = self.get_serializer(data={'refresh': refresh_token})
         try:
             serializer.is_valid(raise_exception=True)
-        except TokenError as e:
+        except (InvalidToken, TokenError) as e:
             return Response({"detail": str(e)}, status=status.HTTP_401_UNAUTHORIZED)
 
         access_token = serializer.validated_data.get('access')
         new_refresh_token = serializer.validated_data.get('refresh')
-        response = Response({'csrf_token': get_token(request)}, status=status.HTTP_200_OK)
+        response = Response({}, status=status.HTTP_200_OK)
         set_jwt_cookies(response, access_token, new_refresh_token)
         return response
 
 
 class LogoutView(APIView):
-    """Supprime les cookies d'authentification et révoque le refresh token."""
+    """Supprime les cookies d'authentification."""
     def post(self, request):
-        if (request.COOKIES.get('access_token') or request.COOKIES.get('refresh_token')) and not request.META.get('HTTP_AUTHORIZATION'):
-            enforce_csrf(request)
-        refresh_token = request.COOKIES.get('refresh_token')
-        if refresh_token:
-            try:
-                RefreshToken(refresh_token).blacklist()
-            except Exception:
-                pass
         response = Response({"message": "Déconnexion réussie"}, status=status.HTTP_200_OK)
         samesite = getattr(settings, 'AUTH_COOKIE_SAMESITE', 'Lax')
         response.delete_cookie('access_token', path='/', samesite=samesite)
@@ -265,7 +231,6 @@ class ChangePasswordView(APIView):
             return Response({'error': 'Mot de passe actuel incorrect.'}, status=400)
         user.set_password(serializer.validated_data['new_password'])
         user.save()
-        _blacklist_all_user_tokens(user)
         return Response({'message': 'Mot de passe modifié avec succès.'})
 
 
@@ -402,7 +367,6 @@ class ResetPasswordView(APIView):
 
         user.set_password(new_password)
         user.save()
-        _blacklist_all_user_tokens(user)
 
         return Response(
             {"message": "Votre mot de passe a été réinitialisé avec succès."},

@@ -12,7 +12,7 @@ from drf_spectacular.views import SpectacularAPIView, SpectacularRedocView, Spec
 # Import views
 from accounts.permissions import IsAdminOrDebugOnly
 from accounts.views import (
-    CustomTokenObtainPairView, CookieTokenRefreshView, LogoutView, CsrfTokenView, UserViewSet,
+    CustomTokenObtainPairView, CookieTokenRefreshView, LogoutView, UserViewSet,
     MeView, ChangePasswordView, RolePermissionView, ForgotPasswordView, ResetPasswordView
 )
 from clients.views import ClientViewSet
@@ -72,7 +72,6 @@ urlpatterns = [
     path('api/site/', include('site_settings.urls')),
 
     # Auth endpoints
-    path('api/auth/csrf/', CsrfTokenView.as_view(), name='csrf_token'),
     path('api/auth/login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('api/auth/refresh/', CookieTokenRefreshView.as_view(), name='token_refresh'),
     path('api/auth/logout/', LogoutView.as_view(), name='logout'),

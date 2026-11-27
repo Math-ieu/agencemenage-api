@@ -174,9 +174,9 @@ class SecurityP0AuthAndPrivilegeTests(APITestCase):
         self.assertEqual(resp.status_code, 200)
         self.assertEqual(list(resp.data.keys()), ['Client Conciergerie'])
 
-    def test_cookie_jwt_csrf_enforcement_and_bearer_exemption(self):
-        csrf_client = APIClient(enforce_csrf_checks=True)
-        login_resp = csrf_client.post(
+    def test_original_cookie_login_refresh_logout_flow(self):
+        client = APIClient()
+        login_resp = client.post(
             '/api/auth/login/',
             {'email': self.commercial.email, 'password': 'StrongPassword123!'},
             format='json',
@@ -187,59 +187,34 @@ class SecurityP0AuthAndPrivilegeTests(APITestCase):
         self.assertNotIn('access', login_resp.data)
         self.assertNotIn('refresh', login_resp.data)
 
-        # Mutating cookie-authenticated endpoint without X-CSRFToken must fail with 403
-        resp_no_csrf = csrf_client.patch(
-            '/api/auth/me/',
-            {'first_name': 'NoCsrf'},
+        # Login also works by username
+        username_resp = APIClient().post(
+            '/api/auth/login/',
+            {'email': self.commercial.username, 'password': 'StrongPassword123!'},
             format='json',
         )
-        self.assertEqual(resp_no_csrf.status_code, 403)
+        self.assertEqual(username_resp.status_code, 200)
 
-        resp_refresh_no_csrf = csrf_client.post('/api/auth/refresh/', {}, format='json')
-        self.assertEqual(resp_refresh_no_csrf.status_code, 403)
+        # Cookie-authenticated GET / PATCH / refresh / logout work without extra CSRF protocol
+        me_resp = client.get('/api/auth/me/')
+        self.assertEqual(me_resp.status_code, 200)
+        self.assertEqual(me_resp.data['email'], self.commercial.email)
 
-        resp_logout_no_csrf = csrf_client.post('/api/auth/logout/', {}, format='json')
-        self.assertEqual(resp_logout_no_csrf.status_code, 403)
-
-        # Fetch CSRF token via endpoint and send header
-        csrf_init = csrf_client.get('/api/auth/csrf/')
-        self.assertEqual(csrf_init.status_code, 200)
-        csrf_token = csrf_init.data.get('csrfToken') or csrf_init.data.get('csrf_token')
-        if not csrf_token and 'csrftoken' in csrf_init.cookies:
-            csrf_token = csrf_init.cookies['csrftoken'].value
-        self.assertTrue(csrf_token)
-
-        resp_with_csrf = csrf_client.patch(
-            '/api/auth/me/',
-            {'first_name': 'WithCsrf'},
-            format='json',
-            HTTP_X_CSRFTOKEN=csrf_token,
-        )
-        self.assertEqual(resp_with_csrf.status_code, 200)
+        patch_resp = client.patch('/api/auth/me/', {'first_name': 'Updated'}, format='json')
+        self.assertEqual(patch_resp.status_code, 200)
         self.commercial.refresh_from_db()
-        self.assertEqual(self.commercial.first_name, 'WithCsrf')
+        self.assertEqual(self.commercial.first_name, 'Updated')
 
-        resp_refresh_ok = csrf_client.post(
-            '/api/auth/refresh/',
-            {},
-            format='json',
-            HTTP_X_CSRFTOKEN=csrf_token,
-        )
-        self.assertEqual(resp_refresh_ok.status_code, 200)
-        self.assertIn('access_token', resp_refresh_ok.cookies)
+        ref_resp = client.post('/api/auth/refresh/', {}, format='json')
+        self.assertEqual(ref_resp.status_code, 200)
+        self.assertIn('access_token', ref_resp.cookies)
 
-        csrf_token = resp_refresh_ok.data.get('csrf_token') or csrf_token
-        resp_logout_ok = csrf_client.post(
-            '/api/auth/logout/',
-            {},
-            format='json',
-            HTTP_X_CSRFTOKEN=csrf_token,
-        )
-        self.assertEqual(resp_logout_ok.status_code, 200)
+        logout_resp = client.post('/api/auth/logout/', {}, format='json')
+        self.assertEqual(logout_resp.status_code, 200)
 
-        # Bearer token client works without CSRF header even when enforce_csrf_checks=True
+        # Bearer token client works as well
         bearer_token = str(RefreshToken.for_user(self.commercial).access_token)
-        bearer_client = APIClient(enforce_csrf_checks=True)
+        bearer_client = APIClient()
         bearer_client.credentials(HTTP_AUTHORIZATION=f'Bearer {bearer_token}')
         resp_bearer = bearer_client.patch(
             '/api/auth/me/',
