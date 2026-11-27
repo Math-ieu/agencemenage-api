@@ -75,7 +75,7 @@ class CustomTokenObtainPairSerializer(serializers.Serializer):
     password = serializers.CharField(write_only=True)
 
     def validate(self, attrs):
-        login_val = attrs.get('email') or attrs.get('username') or attrs.get('login')
+        login_val = (attrs.get('email') or attrs.get('username') or attrs.get('login') or '').strip()
         password = attrs.get('password')
 
         if not login_val:

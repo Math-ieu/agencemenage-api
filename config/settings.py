@@ -18,7 +18,7 @@ if not DEBUG and (not SECRET_KEY or SECRET_KEY == 'django-insecure-changeme' or 
 ALLOWED_HOSTS = [
     h for h in config(
         'ALLOWED_HOSTS',
-        default='localhost,127.0.0.1,testserver,api.agencemenage.ma' if DEBUG else 'api.agencemenage.ma',
+        default='localhost,127.0.0.1,testserver,api.agencemenage.ma,agencemenage-api.up.railway.app' if DEBUG else 'api.agencemenage.ma,agencemenage-api.up.railway.app',
         cast=Csv(),
     ) if h
 ]
@@ -200,10 +200,10 @@ SIMPLE_JWT = {
 # ─── Auth Cookies & HTTP Security ─────────────────────────────────────────────
 AUTH_COOKIE_SECURE = not DEBUG
 AUTH_COOKIE_HTTP_ONLY = True
-AUTH_COOKIE_SAMESITE = config('AUTH_COOKIE_SAMESITE', default='Lax')
+AUTH_COOKIE_SAMESITE = config('AUTH_COOKIE_SAMESITE', default='Lax' if DEBUG else 'None')
 SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
-SESSION_COOKIE_SAMESITE = 'Lax'
+SESSION_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
 CSRF_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SAMESITE = AUTH_COOKIE_SAMESITE
